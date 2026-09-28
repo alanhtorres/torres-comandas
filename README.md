@@ -71,7 +71,15 @@ chrome --kiosk --autoplay-policy=no-user-gesture-required http://IP-DO-SERVIDOR:
 
 Os vídeos do painel sempre tocam sem som.
 
-## Rodando
+## Instalando no Windows (modo simples)
+
+1. Instale o Python em https://www.python.org/downloads/ marcando **"Add python.exe to PATH"**.
+2. Baixe este projeto (botão **Code → Download ZIP** no GitHub) e extraia em uma pasta, ex.: `C:\TorresComandas`.
+3. Dê dois cliques em **`instalar.bat`** (uma vez só; precisa de internet).
+4. Dê dois cliques em **`iniciar.bat`**. A janela mostra os endereços das telas. Deixe-a aberta.
+5. Na primeira vez o Windows pergunta sobre o firewall: permita em **Redes privadas**.
+
+## Rodando (desenvolvimento)
 
 Requer Python 3.10+.
 
