@@ -23,6 +23,9 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
+; O executável é 64 bits: instala em "Arquivos de Programas" (e não no "(x86)").
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Fecha o programa aberto antes de atualizar os arquivos (atualização por cima).
 CloseApplications=force
