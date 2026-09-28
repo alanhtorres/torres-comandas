@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Painel de chamada</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='painel.css') }}">
+</head>
+<body>
+  <div class="tela">
+    <section id="vitrine"></section>
+    <aside>
+      <header>
+        <span id="loja"></span>
+        <span id="relogio"></span>
+      </header>
+      <div class="atual">
+        <div class="rotulo">Pedido pronto — pode retirar</div>
+        <div id="atual-codigo" class="codigo">—</div>
+        <div id="atual-detalhe" class="detalhe"></div>
+      </div>
+      <div class="rotulo historico-titulo">Últimas chamadas</div>
+      <ol id="historico"></ol>
+    </aside>
+  </div>
+  <div id="anuncio" hidden>
+    <div class="caixa-anuncio">
+      <div id="anuncio-rotulo" class="rotulo"></div>
+      <div id="anuncio-codigo" class="codigo"></div>
+      <div id="anuncio-detalhe" class="detalhe"></div>
+    </div>
+  </div>
+  <div id="sem-conexao" hidden>Sem conexão com o servidor</div>
+  <button id="ativar-som" hidden>🔔 Toque aqui para ativar o som das chamadas</button>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='painel.js') }}"></script>
+</body>
+</html>

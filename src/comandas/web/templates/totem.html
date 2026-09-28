@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Retire sua senha</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <style>
+    html, body { height: 100%; user-select: none; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4vh; padding: 4vh 4vw; text-align: center; }
+    h1 { font-size: 5vh; margin: 0; }
+    p.sub { color: var(--texto-2); font-size: 2.6vh; margin: 0; }
+    .botoes { display: flex; gap: 3vw; width: 100%; max-width: 1100px; }
+    .botoes button { flex: 1; padding: 7vh 2vw; font-size: 4.2vh; border-radius: 3vh; font-weight: 800; }
+    .botoes small { display: block; font-size: 2.2vh; font-weight: 500; margin-top: 1vh; opacity: .8; }
+    @media (orientation: portrait) { .botoes { flex-direction: column; } }
+    #resultado { position: fixed; inset: 0; background: var(--fundo); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; }
+    #resultado[hidden] { display: none; }
+    #resultado .codigo { font-size: 26vh; font-weight: 900; line-height: 1; color: var(--destaque); }
+    #resultado p { font-size: 3.2vh; margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="sem-conexao" hidden>Sem conexão com o servidor</div>
+  <h1 id="loja">Retire sua senha</h1>
+  <p class="sub">Toque no tipo de atendimento</p>
+  <div class="botoes">
+    <button class="primario" data-prefixo="N">Atendimento normal</button>
+    <button class="amarelo" data-prefixo="P">Preferencial<small>Idosos 60+, gestantes, lactantes, pessoas com deficiência ou criança de colo</small></button>
+  </div>
+  <div id="resultado" hidden>
+    <p>Sua senha é</p>
+    <div class="codigo" id="codigo"></div>
+    <p id="instrucao">Aguarde ser chamado no painel</p>
+  </div>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      let ocupado = false;
+      document.querySelectorAll("[data-prefixo]").forEach((b) => b.addEventListener("click", async () => {
+        if (ocupado) return;
+        ocupado = true;
+        try {
+          const r = await C.api("POST", "/api/senhas", { prefixo: b.dataset.prefixo, origem: "totem" });
+          $("codigo").textContent = r.senha.codigo;
+          $("instrucao").textContent = r.impressa
+            ? "Retire o papel e aguarde ser chamado no painel" : "Guarde este número e aguarde ser chamado no painel";
+          $("resultado").hidden = false;
+          setTimeout(() => { $("resultado").hidden = true; ocupado = false; }, 6000);
+        } catch (err) {
+          C.aviso(err.message, "erro");
+          ocupado = false;
+        }
+      }));
+    })();
+  </script>
+</body>
+</html>

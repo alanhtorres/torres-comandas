@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Cozinha — Torres Comandas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='cozinha.css') }}">
+</head>
+<body>
+  <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
+  <header class="topo">
+    <h1>👨‍🍳 Cozinha</h1>
+    <span class="etiqueta novo" id="n-fila">0 na fila</span>
+    <span class="etiqueta preparando" id="n-preparo">0 em preparo</span>
+    <span class="espaco"></span>
+    <span id="relogio" style="font-variant-numeric: tabular-nums; font-size: 1.2rem"></span>
+    <nav><a href="/">Início</a><a href="/caixa">Caixa</a></nav>
+  </header>
+  <main id="pedidos" class="grade-cozinha"></main>
+  <section id="prontos-recentes"></section>
+  <button id="ativar-som" class="amarelo" hidden>🔔 Ativar som de novos pedidos</button>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='cozinha.js') }}"></script>
+</body>
+</html>

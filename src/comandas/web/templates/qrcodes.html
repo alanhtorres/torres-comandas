@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>QR codes das mesas — {{ loja }}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }
+    .barra { margin-bottom: 16px; }
+    .folha { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .qr { border: 2px dashed #bbb; border-radius: 12px; padding: 14px; text-align: center; break-inside: avoid; }
+    .qr img { width: 100%; max-width: 200px; }
+    .qr h2 { margin: 4px 0; font-size: 1.6rem; }
+    .qr p { margin: 2px 0; font-size: 0.85rem; color: #444; }
+    @media print { .barra { display: none; } body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <div class="barra">
+    <button onclick="window.print()">🖨️ Imprimir</button>
+    <a href="/admin#mesas">Voltar</a>
+  </div>
+  {% if not mesas %}<p>Nenhuma mesa cadastrada.</p>{% endif %}
+  <div class="folha">
+    {% for mesa in mesas %}
+    <div class="qr">
+      <p><strong>{{ loja }}</strong></p>
+      <img src="/qrcode/mesa/{{ mesa.id }}.svg" alt="QR code da mesa {{ mesa.numero }}">
+      <h2>Mesa {{ mesa.numero }}</h2>
+      <p>Aponte a câmera do celular para ver o cardápio, fazer o pedido e chamar o garçom</p>
+    </div>
+    {% endfor %}
+  </div>
+</body>
+</html>

@@ -1,0 +1,36 @@
+main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+.aba { display: flex; flex-direction: column; gap: 16px; }
+.aba[hidden] { display: none; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
+.abas { display: flex; gap: 4px; padding: 0 16px; background: var(--painel); border-bottom: 1px solid var(--borda); overflow-x: auto; }
+.abas a { padding: 12px 14px; color: var(--texto-2); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+.abas a.ativa { color: var(--texto); border-bottom-color: var(--destaque); }
+.grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 14px; }
+.grade-form .largo { grid-column: span 2; }
+@media (max-width: 520px) { .grade-form .largo { grid-column: auto; } }
+.acoes-form { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.linha { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0; }
+.linha input { width: auto; flex: 1; }
+.dica { color: var(--texto-2); font-size: 0.85rem; }
+code { color: var(--destaque); word-break: break-all; }
+
+.tabela { width: 100%; border-collapse: collapse; }
+.tabela td, .tabela th { padding: 8px 6px; border-bottom: 1px solid var(--borda); text-align: left; vertical-align: middle; }
+.tabela th { color: var(--texto-2); font-size: 0.8rem; font-weight: 600; }
+.tabela .miniatura { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; background: var(--fundo); display: block; }
+.tabela .sem-foto { width: 52px; height: 52px; border-radius: 8px; background: var(--fundo); display: flex; align-items: center; justify-content: center; color: var(--texto-2); font-size: 1.3rem; }
+.tabela tr.inativo td { opacity: 0.5; }
+.tabela .acoes { text-align: right; white-space: nowrap; }
+.tabela .acoes button { padding: 6px 10px; margin-left: 4px; }
+.tabela input[type=number] { width: 80px; padding: 6px; }
+.grupo-categoria td { background: var(--painel-2); font-weight: 700; }
+
+.grade-mesas { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-top: 12px; }
+.mesa { background: var(--fundo); border: 1px solid var(--borda); border-radius: 10px; padding: 10px; text-align: center; }
+.mesa img { width: 100%; background: #fff; border-radius: 6px; }
+.mesa strong { display: block; font-size: 1.2rem; margin: 6px 0; }
+.mesa .botoes { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+.mesa .botoes button, .mesa .botoes a { font-size: 0.8rem; padding: 6px 8px; }
+
+progress { width: 100%; height: 12px; }
+.barra-salvar { position: sticky; bottom: 0; padding: 12px 0; background: linear-gradient(transparent, var(--fundo) 30%); text-align: right; }

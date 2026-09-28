@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Cardápio</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="stylesheet" href="{{ url_for('static', filename='cliente.css') }}">
+</head>
+<body data-token="{{ token }}">
+  <header class="cab">
+    <div>
+      <h1 id="loja">Cardápio</h1>
+      <div id="mesa" class="mesa"></div>
+    </div>
+  </header>
+
+  <div class="chamar">
+    <button id="chamar-garcom">🙋 Chamar garçom</button>
+    <button id="pedir-conta">🧾 Pedir a conta</button>
+  </div>
+
+  <section id="meus-pedidos" hidden>
+    <h2>Pedidos desta mesa</h2>
+    <div id="lista-pedidos"></div>
+  </section>
+
+  <div id="aviso-desativado" class="aviso" hidden>Os pedidos pelo celular estão pausados. Chame um atendente para pedir.</div>
+
+  <nav id="categorias" class="categorias"></nav>
+  <main id="cardapio"></main>
+
+  <button id="barra-carrinho" class="barra-carrinho" hidden>
+    <span id="barra-qtd"></span><span>Ver pedido</span><strong id="barra-total"></strong>
+  </button>
+
+  <div id="folha" class="folha" hidden>
+    <div class="folha-conteudo">
+      <div class="folha-topo"><h2>Seu pedido</h2><button id="fechar-folha" class="fechar" aria-label="Fechar">✕</button></div>
+      <div id="itens-folha"></div>
+      <label for="nome-cliente">Seu nome (para chamarmos quando ficar pronto)</label>
+      <input id="nome-cliente" maxlength="60" autocomplete="given-name" placeholder="Opcional">
+      <label for="obs-pedido">Alguma observação?</label>
+      <textarea id="obs-pedido" maxlength="300" rows="2" placeholder="Ex.: sem gelo, ponto da carne..."></textarea>
+      <div class="total"><span>Total</span><strong id="total-folha"></strong></div>
+      <button id="confirmar" class="confirmar">Enviar pedido</button>
+    </div>
+  </div>
+
+  <div id="aviso-flutuante"></div>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='cliente.js') }}"></script>
+</body>
+</html>

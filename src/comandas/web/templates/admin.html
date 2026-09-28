@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Administração — Torres Comandas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+</head>
+<body>
+  <header class="topo">
+    <h1>⚙️ Administração</h1>
+    <span class="espaco"></span>
+    <nav><a href="/">Início</a><a href="/caixa">Caixa</a><a href="/sair">Sair</a></nav>
+  </header>
+  <nav class="abas">
+    <a href="#produtos" data-aba="produtos">Cardápio / produtos</a>
+    <a href="#mesas" data-aba="mesas">Mesas e QR codes</a>
+    <a href="#midias" data-aba="midias">Fotos e vídeos do painel</a>
+    <a href="#config" data-aba="config">Configurações</a>
+  </nav>
+
+  <main>
+    <!-- Produtos -->
+    <section id="aba-produtos" class="aba" hidden>
+      <form id="form-produto" class="cartao">
+        <h2 id="titulo-form-produto">Novo produto</h2>
+        <input type="hidden" id="produto-id">
+        <div class="grade-form">
+          <div class="largo"><label for="produto-nome">Nome</label><input id="produto-nome" required maxlength="80"></div>
+          <div><label for="produto-categoria">Categoria</label><input id="produto-categoria" list="lista-categorias" placeholder="Lanches, Bebidas..." maxlength="40"><datalist id="lista-categorias"></datalist></div>
+          <div><label for="produto-preco">Preço (R$)</label><input id="produto-preco" inputmode="decimal" placeholder="0,00" required></div>
+          <div class="largo"><label for="produto-descricao">Descrição (aparece no cardápio do QR code)</label><input id="produto-descricao" maxlength="200"></div>
+          <div><label for="produto-foto">Foto (opcional)</label><input id="produto-foto" type="file" accept="image/*"></div>
+          <div><label>&nbsp;</label><label class="inline"><input id="produto-ativo" type="checkbox" checked> Disponível para venda</label></div>
+        </div>
+        <div class="acoes-form">
+          <button type="button" id="cancelar-edicao" class="discreto" hidden>Cancelar edição</button>
+          <button type="submit" class="primario">Salvar produto</button>
+        </div>
+      </form>
+      <div class="cartao">
+        <h2>Produtos cadastrados</h2>
+        <div id="lista-produtos"></div>
+      </div>
+    </section>
+
+    <!-- Mesas -->
+    <section id="aba-mesas" class="aba" hidden>
+      <div class="cartao">
+        <h2>Adicionar mesas</h2>
+        <div class="linha">
+          <span>Da mesa</span><input id="mesa-de" type="number" min="1" value="1" style="width: 90px">
+          <span>até</span><input id="mesa-ate" type="number" min="1" value="10" style="width: 90px">
+          <button id="criar-lote" class="primario">Criar mesas</button>
+        </div>
+        <div class="linha">
+          <span>ou uma mesa com nome:</span><input id="mesa-nome" placeholder="Ex.: Varanda 3" style="max-width: 220px">
+          <button id="criar-mesa">Adicionar</button>
+        </div>
+        <p class="dica">O QR code de cada mesa abre o cardápio no celular do cliente. Endereço usado dentro dos QR codes:
+          <code id="url-base"></code> — se estiver errado, ajuste em Configurações.</p>
+      </div>
+      <div class="cartao">
+        <div class="linha" style="justify-content: space-between">
+          <h2 style="margin: 0">Mesas</h2>
+          <a href="/admin/qrcodes" target="_blank"><button>🖨️ Imprimir todos os QR codes</button></a>
+        </div>
+        <div id="lista-mesas" class="grade-mesas"></div>
+      </div>
+    </section>
+
+    <!-- Mídias -->
+    <section id="aba-midias" class="aba" hidden>
+      <div class="cartao">
+        <h2>Enviar fotos e vídeos para o painel</h2>
+        <p class="dica">Aparecem na parte grande do painel de chamada (TV), em sequência. Fotos: JPG/PNG/WEBP.
+          Vídeos: MP4 (H.264) ou WEBM — tocam sem som. Sem nenhuma mídia aqui, o painel mostra as fotos dos produtos com nome e preço.</p>
+        <div class="linha">
+          <input id="arquivos-midia" type="file" accept="image/*,video/mp4,video/webm,.m4v" multiple>
+          <button id="enviar-midia" class="primario">Enviar</button>
+        </div>
+        <progress id="progresso-midia" max="100" value="0" hidden></progress>
+      </div>
+      <div class="cartao">
+        <h2>Sequência do painel</h2>
+        <div id="lista-midias"></div>
+      </div>
+    </section>
+
+    <!-- Configurações -->
+    <section id="aba-config" class="aba" hidden>
+      <form id="form-config">
+        <div class="cartao">
+          <h2>Estabelecimento</h2>
+          <label for="cfg-nome_loja">Nome (aparece nas telas e nos cupons)</label>
+          <input id="cfg-nome_loja" name="nome_loja" maxlength="60">
+          <label for="cfg-url_base">Endereço deste servidor na rede (usado nos QR codes)</label>
+          <input id="cfg-url_base" name="url_base" placeholder="">
+          <p class="dica">Deixe vazio para detectar sozinho. Se o IP do PC mudar, os QR codes impressos param de funcionar —
+            reserve um IP fixo para este PC no roteador (recomendado).</p>
+        </div>
+
+        <div class="cartao">
+          <h2>Pedidos e painel</h2>
+          <label class="inline"><input type="checkbox" name="pedidos_qrcode_ativo"> Aceitar pedidos pelo QR code das mesas</label>
+          <label class="inline"><input type="checkbox" name="chamar_ao_ficar_pronto"> Chamar no painel automaticamente quando a cozinha marcar "pronto" (sem esperar o caixa)</label>
+          <label class="inline"><input type="checkbox" name="som_chamada"> Tocar aviso sonoro no painel a cada chamada</label>
+          <label class="inline"><input type="checkbox" name="voz_chamada"> Anunciar por voz no painel ("Pedido número 42, pode retirar")</label>
+          <label class="inline"><input type="checkbox" name="mostrar_nome_cliente_painel"> Mostrar o nome do cliente no painel</label>
+          <label class="inline"><input type="checkbox" name="senha_preferencial_primeiro"> Senhas preferenciais têm prioridade na fila</label>
+          <div class="grade-form">
+            <div><label for="cfg-historico_painel">Quantas chamadas no histórico do painel</label><input id="cfg-historico_painel" name="historico_painel" type="number" min="1" max="20"></div>
+            <div><label for="cfg-duracao_foto_painel">Segundos de cada foto no painel</label><input id="cfg-duracao_foto_painel" name="duracao_foto_painel" type="number" min="2" max="300"></div>
+          </div>
+        </div>
+
+        <div class="cartao">
+          <h2>Impressoras térmicas de rede</h2>
+          <p class="dica">Impressoras com rede (Ethernet/Wi-Fi) no padrão ESC/POS — Epson, Elgin, Bematech, Tanca e similares — pela porta 9100.
+            Descubra o IP imprimindo a folha de autoteste da impressora.</p>
+          <label class="inline"><input type="checkbox" name="impressora_cozinha_ativa"> Imprimir os pedidos na cozinha</label>
+          <div class="grade-form">
+            <div><label for="cfg-impressora_cozinha_host">IP da impressora da cozinha</label><input id="cfg-impressora_cozinha_host" name="impressora_cozinha_host" placeholder="192.168.0.50"></div>
+            <div><label for="cfg-impressora_cozinha_porta">Porta</label><input id="cfg-impressora_cozinha_porta" name="impressora_cozinha_porta" type="number"></div>
+            <div><label>&nbsp;</label><button type="button" data-teste="cozinha">Imprimir teste</button></div>
+          </div>
+          <label class="inline" style="margin-top: 16px"><input type="checkbox" name="impressora_senhas_ativa"> Imprimir as senhas (totem / caixa)</label>
+          <div class="grade-form">
+            <div><label for="cfg-impressora_senhas_host">IP da impressora de senhas</label><input id="cfg-impressora_senhas_host" name="impressora_senhas_host" placeholder="192.168.0.51"></div>
+            <div><label for="cfg-impressora_senhas_porta">Porta</label><input id="cfg-impressora_senhas_porta" name="impressora_senhas_porta" type="number"></div>
+            <div><label>&nbsp;</label><button type="button" data-teste="senhas">Imprimir teste</button></div>
+          </div>
+          <div class="grade-form">
+            <div><label for="cfg-impressora_colunas">Largura do papel</label>
+              <select id="cfg-impressora_colunas" name="impressora_colunas"><option value="48">80 mm (48 colunas)</option><option value="32">58 mm (32 colunas)</option></select></div>
+            <div><label for="cfg-impressora_codificacao">Acentuação</label>
+              <select id="cfg-impressora_codificacao" name="impressora_codificacao">
+                <option value="cp850">Padrão (página 850)</option><option value="cp860">Português (página 860)</option><option value="ascii">Sem acentos (se sair caractere estranho)</option>
+              </select></div>
+          </div>
+        </div>
+
+        <div class="cartao">
+          <h2>Acesso da equipe (PIN)</h2>
+          <p class="dica" id="estado-pin"></p>
+          <p class="dica">Clientes conectados no Wi-Fi da loja conseguem abrir o endereço do servidor. Com um PIN, só a equipe acessa
+            caixa, cozinha, totem e administração (o painel da TV e o cardápio do QR code continuam livres).</p>
+          <div class="grade-form">
+            <div><label for="novo-pin">Novo PIN (4 a 12 números)</label><input id="novo-pin" inputmode="numeric" autocomplete="new-password" maxlength="12"></div>
+            <div><label>&nbsp;</label><label class="inline"><input id="remover-pin" type="checkbox"> Remover o PIN (acesso livre)</label></div>
+          </div>
+        </div>
+
+        <div class="barra-salvar"><button type="submit" class="primario grande">Salvar configurações</button></div>
+      </form>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='admin.js') }}"></script>
+</body>
+</html>

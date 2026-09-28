@@ -1,0 +1,83 @@
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body {
+  margin: 0; width: 100%; height: 100%; overflow: hidden;
+  background: #000; color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  cursor: none;
+}
+.tela { display: grid; grid-template-columns: 1fr 30vw; width: 100vw; height: 100vh; }
+@media (orientation: portrait) {
+  .tela { grid-template-columns: 1fr; grid-template-rows: 1fr 42vh; }
+}
+
+#vitrine { position: relative; overflow: hidden; background: #000; }
+#vitrine > * { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#vitrine .slide-produto { display: flex; align-items: flex-end; }
+#vitrine .slide-produto img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#vitrine .slide-produto .legenda {
+  position: relative; width: 100%;
+  padding: 4vh 4vw; background: linear-gradient(transparent, rgba(0,0,0,.85));
+  display: flex; justify-content: space-between; align-items: flex-end; gap: 2vw;
+}
+#vitrine .slide-produto .nome { font-size: 4.5vh; font-weight: 800; text-shadow: 0 2px 8px #000; }
+#vitrine .slide-produto .preco { font-size: 6vh; font-weight: 900; color: #fde047; white-space: nowrap; text-shadow: 0 2px 8px #000; }
+#vitrine .sem-midia { display: flex; align-items: center; justify-content: center; font-size: 6vh; font-weight: 800; color: #475569; text-align: center; padding: 4vw; }
+
+aside {
+  background: linear-gradient(180deg, #0f172a, #111827);
+  display: flex; flex-direction: column;
+  border-left: 4px solid #38bdf8;
+  min-height: 0;
+}
+aside header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 2vh 1.5vw; font-size: 2.6vh; font-weight: 700; background: #0b1220;
+}
+#relogio { font-variant-numeric: tabular-nums; color: #94a3b8; }
+.rotulo { text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; font-size: 2vh; font-weight: 700; }
+.atual { padding: 3vh 1.5vw; text-align: center; background: #14532d; border-bottom: 1px solid #1e293b; }
+.atual .rotulo { color: #bbf7d0; }
+.atual .codigo { font-size: 15vh; font-weight: 900; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.atual .detalhe { font-size: 3.4vh; font-weight: 600; min-height: 4vh; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.historico-titulo { padding: 2vh 1.5vw 1vh; }
+#historico { list-style: none; margin: 0; padding: 0 1.5vw 2vh; overflow: hidden; flex: 1; }
+#historico li {
+  display: flex; align-items: baseline; gap: 1vw;
+  padding: 1.2vh 0; border-bottom: 1px solid #1e293b;
+}
+#historico .codigo { font-size: 5.2vh; font-weight: 800; min-width: 9vw; font-variant-numeric: tabular-nums; }
+#historico .detalhe { font-size: 2.6vh; color: #cbd5e1; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#historico li.entregue { opacity: .4; }
+@media (orientation: portrait) {
+  aside { border-left: none; border-top: 4px solid #38bdf8; }
+  .atual .codigo { font-size: 10vh; }
+  #historico { display: flex; flex-wrap: wrap; gap: 0 3vw; }
+  #historico li { width: 45%; }
+  #historico .codigo { font-size: 4vh; }
+}
+
+#anuncio {
+  position: fixed; inset: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.75);
+}
+#anuncio[hidden] { display: none; }
+.caixa-anuncio {
+  background: #16a34a; border-radius: 3vh; padding: 5vh 6vw; text-align: center;
+  box-shadow: 0 0 0 1.5vh rgba(34,197,94,.35); animation: entrar .5s ease-out, pulso 1s ease-in-out .5s infinite;
+  max-width: 90vw;
+}
+.caixa-anuncio .rotulo { color: #dcfce7; font-size: 4vh; }
+.caixa-anuncio .codigo { font-size: 30vh; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+.caixa-anuncio .detalhe { font-size: 6vh; font-weight: 700; }
+@keyframes entrar { from { transform: scale(.6); opacity: 0; } }
+@keyframes pulso { 50% { transform: scale(1.04); } }
+
+#sem-conexao { position: fixed; top: 0; left: 0; right: 0; background: #dc2626; text-align: center; padding: .6vh; font-weight: 700; z-index: 20; }
+#sem-conexao[hidden] { display: none; }
+#ativar-som {
+  position: fixed; left: 1vw; bottom: 1vh; z-index: 30; cursor: pointer;
+  background: #f59e0b; color: #111; border: none; border-radius: 1vh; padding: 1.2vh 1.5vw; font-size: 2vh; font-weight: 700;
+}
+#ativar-som[hidden] { display: none; }

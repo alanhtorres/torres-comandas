@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Caixa — Torres Comandas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='caixa.css') }}">
+</head>
+<body>
+  <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
+  <header class="topo">
+    <h1>🧾 Caixa <span id="nome-loja" style="color: var(--texto-2); font-weight: 400"></span></h1>
+    <span class="espaco"></span>
+    <nav><a href="/">Início</a><a href="/cozinha">Cozinha</a><a href="/painel" target="_blank">Painel</a><a href="/admin">Administração</a></nav>
+  </header>
+
+  <div id="chamados-garcom"></div>
+
+  <main class="colunas">
+    <section class="coluna-pedido">
+      <div class="cartao">
+        <h2>Novo pedido</h2>
+        <input id="busca" type="search" placeholder="Buscar produto...">
+        <div id="categorias" class="chips"></div>
+        <div id="produtos" class="grade-produtos"></div>
+      </div>
+
+      <div class="cartao carrinho">
+        <h2>Itens <span id="qtd-itens" class="etiqueta">0</span></h2>
+        <div id="itens-carrinho"></div>
+        <div class="campos-duplos">
+          <div><label for="cliente">Nome do cliente (aparece no painel)</label><input id="cliente" maxlength="60" placeholder="Opcional"></div>
+          <div><label for="mesa">Mesa</label><input id="mesa" maxlength="40" placeholder="Opcional"></div>
+        </div>
+        <label for="obs">Observação para a cozinha</label>
+        <input id="obs" maxlength="300" placeholder="Opcional">
+        <div class="total-linha">
+          <span>Total</span><strong id="total">R$ 0,00</strong>
+        </div>
+        <div class="acoes-carrinho">
+          <button id="limpar" class="discreto">Limpar</button>
+          <button id="enviar" class="primario grande" disabled>Enviar para a cozinha</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="coluna-lista">
+      <div class="cartao senhas">
+        <h2>Senhas de atendimento</h2>
+        <div class="fila">
+          <div><span class="rotulo">Normal</span><strong id="fila-N">0</strong></div>
+          <div><span class="rotulo">Preferencial</span><strong id="fila-P">0</strong></div>
+        </div>
+        <div class="linha-botoes">
+          <button id="emitir-N">+ Senha normal</button>
+          <button id="emitir-P">+ Preferencial</button>
+        </div>
+        <div class="linha-botoes">
+          <input id="guiche" maxlength="20" placeholder="Guichê" style="max-width: 110px">
+          <button id="chamar-proxima" class="amarelo" style="flex: 1">📢 Chamar próxima senha</button>
+        </div>
+        <div id="senhas-chamadas"></div>
+      </div>
+
+      <h3 class="titulo-secao">Prontos — chamar cliente <span id="n-prontos" class="etiqueta pronto">0</span></h3>
+      <div id="lista-prontos"></div>
+      <h3 class="titulo-secao">Na cozinha <span id="n-cozinha" class="etiqueta">0</span></h3>
+      <div id="lista-cozinha"></div>
+      <h3 class="titulo-secao">Chamados — aguardando retirada <span id="n-chamados" class="etiqueta chamado">0</span></h3>
+      <div id="lista-chamados"></div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='caixa.js') }}"></script>
+</body>
+</html>

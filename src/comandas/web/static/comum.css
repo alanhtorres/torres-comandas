@@ -1,0 +1,140 @@
+/* Base visual das telas da equipe (caixa, cozinha, admin, totem). */
+:root {
+  --fundo: #0f172a;
+  --painel: #1e293b;
+  --painel-2: #273449;
+  --borda: #334155;
+  --texto: #e2e8f0;
+  --texto-2: #94a3b8;
+  --destaque: #38bdf8;
+  --verde: #22c55e;
+  --amarelo: #f59e0b;
+  --vermelho: #ef4444;
+  --roxo: #a78bfa;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+}
+
+a { color: var(--destaque); }
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--painel-2);
+  color: var(--texto);
+  font-weight: 500;
+  touch-action: manipulation;
+}
+button:hover { filter: brightness(1.15); }
+button:disabled { opacity: 0.45; cursor: default; filter: none; }
+button.primario { background: var(--destaque); color: #0f172a; font-weight: 700; }
+button.verde { background: var(--verde); color: #052e16; font-weight: 700; }
+button.amarelo { background: var(--amarelo); color: #1c1003; font-weight: 700; }
+button.perigo { background: #7f1d1d; color: #fecaca; }
+button.discreto { background: transparent; color: var(--texto-2); padding: 6px 8px; }
+button.grande { padding: 16px 20px; font-size: 1.1rem; }
+
+input, select, textarea {
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  padding: 10px 12px;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--destaque); border-color: transparent; }
+label { display: block; font-size: 0.85rem; color: var(--texto-2); margin: 10px 0 4px; }
+label.inline { display: flex; align-items: center; gap: 8px; color: var(--texto); font-size: 1rem; }
+label.inline input { width: auto; }
+
+.topo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--painel);
+  border-bottom: 1px solid var(--borda);
+  flex-wrap: wrap;
+}
+.topo h1 { font-size: 1.15rem; margin: 0; }
+.topo .espaco { flex: 1; }
+.topo nav a { color: var(--texto-2); text-decoration: none; margin-left: 12px; font-size: 0.9rem; }
+.topo nav a:hover { color: var(--texto); }
+
+.cartao {
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.etiqueta {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--painel-2);
+  color: var(--texto-2);
+  font-weight: 600;
+}
+.etiqueta.novo { background: #1e3a8a; color: #bfdbfe; }
+.etiqueta.preparando { background: #78350f; color: #fde68a; }
+.etiqueta.pronto { background: #14532d; color: #bbf7d0; }
+.etiqueta.chamado { background: #4c1d95; color: #ddd6fe; }
+.etiqueta.qrcode { background: #164e63; color: #a5f3fc; }
+.etiqueta.erro { background: #7f1d1d; color: #fecaca; }
+
+.vazio { color: var(--texto-2); text-align: center; padding: 24px 8px; }
+
+#aviso-flutuante {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 40px);
+  background: #0b1220;
+  border: 1px solid var(--borda);
+  color: var(--texto);
+  padding: 12px 18px;
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.25s;
+  z-index: 1000;
+  max-width: calc(100vw - 32px);
+}
+#aviso-flutuante.visivel { opacity: 1; transform: translate(-50%, 0); }
+#aviso-flutuante.erro { border-color: var(--vermelho); color: #fecaca; }
+#aviso-flutuante.ok { border-color: var(--verde); }
+
+#sem-conexao {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  background: var(--vermelho);
+  color: #fff;
+  text-align: center;
+  padding: 6px;
+  font-weight: 600;
+  z-index: 999;
+}
+
+#ativar-som {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 998;
+}
