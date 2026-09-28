@@ -71,13 +71,39 @@ chrome --kiosk --autoplay-policy=no-user-gesture-required http://IP-DO-SERVIDOR:
 
 Os vídeos do painel sempre tocam sem som.
 
-## Instalando no Windows (modo simples)
+## Instalando no Windows
 
-1. Instale o Python em https://www.python.org/downloads/ marcando **"Add python.exe to PATH"**.
-2. Baixe este projeto (botão **Code → Download ZIP** no GitHub) e extraia em uma pasta, ex.: `C:\TorresComandas`.
-3. Dê dois cliques em **`instalar.bat`** (uma vez só; precisa de internet).
-4. Dê dois cliques em **`iniciar.bat`**. A janela mostra os endereços das telas. Deixe-a aberta.
-5. Na primeira vez o Windows pergunta sobre o firewall: permita em **Redes privadas**.
+1. Baixe o **`TorresComandas-Setup-x.y.z.exe`** na página **Releases** do GitHub.
+2. Dê dois cliques e siga o assistente (Avançar → Avançar → Concluir). Não precisa
+   instalar Python nem nada mais: vem tudo dentro.
+3. Pronto. O programa fica rodando em segundo plano, com um **ícone laranja perto do
+   relógio do Windows**. Clique nele para abrir as telas ou ver o endereço na rede.
+   Na primeira vez a tela inicial (com os links) abre sozinha no navegador.
+
+O instalador já libera o programa no Firewall do Windows e, por padrão, faz ele
+**iniciar junto com o Windows**. Para atualizar, é só rodar o instalador da versão
+nova por cima: cardápio, pedidos e configurações são preservados (ficam em
+`%LOCALAPPDATA%\TorresComandas`, que também é a pasta para fazer backup — atalho
+"Abrir pasta de dados" no menu do ícone).
+
+Se a porta 8090 estiver ocupada por outro programa, troque em
+`%LOCALAPPDATA%\TorresComandas\servidor.json` e reinicie.
+
+Alternativa sem instalador (quem já tem Python): baixe o código e use
+`instalar.bat` uma vez e depois `iniciar.bat`.
+
+## Gerando o instalador
+
+O instalador é gerado **automaticamente pelo GitHub** (Actions → "Instalador
+Windows"), num Windows da nuvem, que também roda os testes, testa o executável e
+testa instalar/desinstalar de verdade antes de publicar. Para lançar uma versão:
+
+1. Altere `__version__` em `src/comandas/__init__.py` (ex.: `1.1.0`).
+2. Crie a tag e envie: `git tag v1.1.0 && git push origin v1.1.0`.
+3. Em alguns minutos o `TorresComandas-Setup-1.1.0.exe` aparece em Releases.
+
+Para gerar num Windows local: instale Python e o [Inno Setup 6](https://jrsoftware.org/isdl.php)
+e rode `build_tools\build_windows.bat` (saída em `installer\Output\`).
 
 ## Rodando (desenvolvimento)
 
@@ -107,10 +133,14 @@ impressora e conferem os bytes ESC/POS recebidos.
 ```
 main.py                     ponto de entrada
 src/comandas/
-  app.py                    inicialização, pasta de dados, IP da rede
+  app.py                    inicialização, pasta de dados, IP da rede, instância única
+  bandeja.py                ícone na bandeja do Windows
   banco.py                  SQLite + regras (pedidos, senhas, chamadas, mesas, mídias, config)
   servidor.py               rotas Flask (telas + API) e upload de fotos/vídeos
   impressora.py             cupons ESC/POS e envio TCP
   web/templates, web/static telas (HTML/CSS/JS puro, sem build)
 tests/
+build_tools/                PyInstaller (.spec), script de build e teste do .exe
+installer/installer.iss     instalador (Inno Setup)
+.github/workflows/          build automático do instalador no GitHub
 ```

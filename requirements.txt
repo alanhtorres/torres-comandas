@@ -3,3 +3,5 @@ waitress>=3.0,<4.0
 # QR code das mesas (licença BSD)
 segno>=1.6,<2.0
 Pillow>=10.0,<13.0
+# ícone na bandeja do sistema
+pystray>=0.19,<1.0
