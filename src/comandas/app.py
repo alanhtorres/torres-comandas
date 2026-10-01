@@ -73,9 +73,10 @@ class EnderecoRede:
 
     def __call__(self) -> str:
         with self._lock:
-            if self._valor is None or time.time() - self._quando > self.validade or "127.0.0.1" in self._valor:
+            agora = time.monotonic()
+            if self._valor is None or agora - self._quando >= self.validade or "127.0.0.1" in self._valor:
                 self._valor = f"http://{ip_na_rede()}:{self.porta}"
-                self._quando = time.time()
+                self._quando = agora
             return self._valor
 
 
