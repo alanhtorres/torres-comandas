@@ -1,23 +1,23 @@
-"""Servidor web: telas (caixa, cozinha, painel, cliente via QR code, totem de
-senhas, administração) e a API que todas elas usam."""
+"""Servidor web: telas (caixa, cozinha, painel, cliente via QR code,
+administração) e a API que todas elas usam. Cada página e cada ação confere
+se o usuário logado tem a permissão correspondente."""
 import io
 import logging
 import threading
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
 import segno
 from flask import (
-    Flask, abort, jsonify, redirect, render_template, request, send_from_directory, session, url_for,
+    Flask, Response, abort, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for,
 )
 from PIL import Image, ImageOps, UnidentifiedImageError
-from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import impressora
-from .banco import PREFIXOS_SENHA, Banco, ErroNegocio
+from .banco import FORMAS_PAGAMENTO, MODELOS, PERMISSOES, PERMISSOES_ADMIN, Banco, ErroNegocio
 
 EXT_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 # Formatos que qualquer navegador de TV/celular toca sem conversão.
@@ -41,17 +41,26 @@ def _salvar_foto(arquivo_enviado, destino: Path, lado_maximo: int) -> None:
     img.save(destino, "JPEG", quality=85, optimize=True)
 
 
-def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impressao_sincrona: bool = False) -> Flask:
+def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sincrona: bool = False) -> Flask:
+    """`url_base_padrao` pode ser um texto fixo ou uma função que devolve o
+    endereço atual deste PC na rede (redescoberto se o IP mudar)."""
     web = Path(__file__).parent / "web"
     app = Flask(__name__, template_folder=str(web / "templates"), static_folder=str(web / "static"))
     app.secret_key = banco.secret_key()
     app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
     app.permanent_session_lifetime = timedelta(days=60)
+    # Mantém a ordem definida no código (formas de pagamento, permissões):
+    # por padrão o Flask ordenaria alfabeticamente ("Crédito" antes de "Dinheiro").
+    app.json.sort_keys = False
 
     pasta_fotos = pasta_dados / "fotos"
     pasta_midias = pasta_dados / "midias"
     pasta_fotos.mkdir(parents=True, exist_ok=True)
     pasta_midias.mkdir(parents=True, exist_ok=True)
+
+    def url_base() -> str:
+        padrao = url_base_padrao() if callable(url_base_padrao) else url_base_padrao
+        return (banco.config().get("url_base") or padrao or request.host_url).rstrip("/")
 
     @app.errorhandler(ErroNegocio)
     def erro_negocio(exc):
@@ -59,79 +68,141 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
 
     @app.after_request
     def sem_cache(resposta):
-        # TVs e totens raramente têm como forçar "recarregar sem cache":
+        # TVs e tablets raramente têm como forçar "recarregar sem cache":
         # sem isso uma versão antiga das telas ficaria presa após atualizar.
         if not request.path.startswith(("/foto/", "/midia/")):
             resposta.headers["Cache-Control"] = "no-store"
         return resposta
 
-    # --- Acesso da equipe (PIN) ---------------------------------------------
+    # --- Usuário logado e permissões ----------------------------------------
 
-    def pin_definido() -> bool:
-        return bool(banco.config().get("pin_hash"))
+    def usuario_atual():
+        if "usuario" not in g:
+            uid = session.get("usuario_id")
+            usuario = banco.obter_usuario(uid) if uid else None
+            # Usuário desativado (ou excluído) perde o acesso na hora, mesmo logado.
+            g.usuario = usuario if usuario and usuario["ativo"] else None
+        return g.usuario
 
-    def equipe_logada() -> bool:
-        return not pin_definido() or bool(session.get("equipe"))
+    def ator():
+        u = usuario_atual()
+        return {"id": u["id"], "nome": u["nome"]} if u else None
 
-    def exigir_equipe(func):
-        @wraps(func)
-        def envoltorio(*args, **kwargs):
-            if equipe_logada():
+    def pode(*permissoes) -> bool:
+        u = usuario_atual()
+        return bool(u) and any(p in u["permissoes"] for p in permissoes)
+
+    def exigir(*permissoes):
+        """Exige login e, se informado, pelo menos uma das permissões."""
+        def decorador(func):
+            @wraps(func)
+            def envoltorio(*args, **kwargs):
+                api = request.path.startswith("/api/")
+                if not banco.existe_usuario():
+                    if api:
+                        return jsonify({"ok": False, "erro": "Crie o administrador no primeiro acesso."}), 401
+                    return redirect(url_for("primeiro_acesso"))
+                if not usuario_atual():
+                    if api:
+                        return jsonify({"ok": False, "erro": "Faça login para continuar."}), 401
+                    return redirect(url_for("login", proximo=request.path))
+                if permissoes and not pode(*permissoes):
+                    if api:
+                        return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
+                    return render_template("mensagem.html", titulo="Sem permissão",
+                                           texto="Seu usuário não tem acesso a esta página. Fale com o administrador.",
+                                           voltar=True), 403
                 return func(*args, **kwargs)
-            if request.path.startswith("/api/"):
-                return jsonify({"ok": False, "erro": "Acesso restrito: faça login com o PIN."}), 401
-            return redirect(url_for("login", proximo=request.path))
-        return envoltorio
+            return envoltorio
+        return decorador
+
+    @app.context_processor
+    def contexto_templates():
+        return {"usuario": usuario_atual(), "pode": pode, "loja": banco.config()["nome_loja"]}
+
+    # --- Login ---------------------------------------------------------------
+
+    def _destino_seguro(proximo: str) -> str:
+        return proximo if proximo and proximo.startswith("/") and not proximo.startswith("//") else "/"
 
     @app.get("/login")
     def login():
-        return render_template("login.html", loja=banco.config()["nome_loja"], erro=None)
+        if not banco.existe_usuario():
+            return redirect(url_for("primeiro_acesso"))
+        return render_template("login.html", erro=None)
 
     @app.post("/login")
     def login_post():
-        cfg = banco.config()
-        proximo = request.args.get("proximo") or "/"
-        if not proximo.startswith("/") or proximo.startswith("//"):
-            proximo = "/"
-        if not cfg.get("pin_hash") or check_password_hash(cfg["pin_hash"], request.form.get("pin", "")):
-            session.permanent = True
-            session["equipe"] = True
-            return redirect(proximo)
-        time.sleep(1)  # atrasa tentativas de adivinhar o PIN
-        return render_template("login.html", loja=cfg["nome_loja"], erro="PIN incorreto."), 401
+        usuario = banco.autenticar(request.form.get("usuario", ""), request.form.get("senha", ""))
+        if not usuario:
+            time.sleep(1)  # atrasa quem tenta adivinhar senhas
+            return render_template("login.html", erro="Usuário ou senha incorretos."), 401
+        session.clear()
+        session.permanent = True
+        session["usuario_id"] = usuario["id"]
+        return redirect(_destino_seguro(request.args.get("proximo")))
 
     @app.get("/sair")
     def sair():
+        if usuario_atual():
+            banco.registrar_saida(ator())
         session.clear()
         return redirect(url_for("login"))
 
+    @app.get("/primeiro-acesso")
+    def primeiro_acesso():
+        if banco.existe_usuario():
+            return redirect(url_for("login"))
+        return render_template("primeiro_acesso.html", erro=None)
+
+    @app.post("/primeiro-acesso")
+    def primeiro_acesso_post():
+        if banco.existe_usuario():
+            return redirect(url_for("login"))
+        form = request.form
+        if form.get("senha") != form.get("confirmar"):
+            return render_template("primeiro_acesso.html", erro="As senhas não conferem."), 400
+        try:
+            usuario = banco.criar_primeiro_admin({"nome": form.get("nome"), "login": form.get("usuario"),
+                                                  "senha": form.get("senha")})
+        except ErroNegocio as exc:
+            return render_template("primeiro_acesso.html", erro=str(exc)), 400
+        session.clear()
+        session.permanent = True
+        session["usuario_id"] = usuario["id"]
+        return redirect("/admin#usuarios")
+
+    @app.get("/api/eu")
+    @exigir()
+    def api_eu():
+        return jsonify({"usuario": usuario_atual()})
+
+    @app.post("/api/minha-senha")
+    @exigir()
+    def api_minha_senha():
+        dados = request.get_json(silent=True) or {}
+        banco.trocar_propria_senha(ator(), dados.get("atual", ""), dados.get("nova", ""))
+        return jsonify({"ok": True})
+
     # --- Telas ---------------------------------------------------------------
 
-    def url_base() -> str:
-        return (banco.config().get("url_base") or url_base_padrao or request.host_url).rstrip("/")
-
     @app.get("/")
-    @exigir_equipe
+    @exigir()
     def inicio():
-        return render_template("inicio.html", loja=banco.config()["nome_loja"], url_base=url_base())
+        return render_template("inicio.html", url_base=url_base(), permissoes_admin=PERMISSOES_ADMIN)
 
     @app.get("/caixa")
-    @exigir_equipe
+    @exigir("pedidos", "receber", "caixa")
     def tela_caixa():
         return render_template("caixa.html")
 
     @app.get("/cozinha")
-    @exigir_equipe
+    @exigir("cozinha")
     def tela_cozinha():
         return render_template("cozinha.html")
 
-    @app.get("/totem")
-    @exigir_equipe
-    def tela_totem():
-        return render_template("totem.html")
-
     @app.get("/admin")
-    @exigir_equipe
+    @exigir(*PERMISSOES_ADMIN)
     def tela_admin():
         return render_template("admin.html")
 
@@ -162,126 +233,177 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
         return request.args.get("v") == str(banco.versao)
 
     @app.get("/api/estado")
-    @exigir_equipe
+    @exigir("pedidos", "cozinha", "receber", "caixa")
     def api_estado():
         if _versao_igual():
             return jsonify({"versao": banco.versao, "mudou": False})
         cfg = banco.config()
-        return jsonify({
+        sessao = banco.sessao_aberta()
+        dados = {
             "versao": banco.versao,
             "mudou": True,
             "loja": cfg["nome_loja"],
-            "pedidos": banco.listar_pedidos(tipo="pedido"),
-            "senhas": banco.resumo_senhas(),
-            "senhas_chamadas": banco.listar_pedidos(statuses=("chamado",), tipo="senha"),
-            "chamados_garcom": banco.chamados_pendentes(),
-            "produtos": banco.listar_produtos(somente_ativos=True),
+            "usuario": usuario_atual(),
+            "pedidos": banco.listar_pedidos(),
+            "chamados_garcom": banco.chamados_pendentes() if pode("pedidos") else [],
+            "produtos": banco.listar_produtos(somente_ativos=True) if pode("pedidos") else [],
+            "contas": banco.contas_abertas() if pode("pedidos", "receber") else [],
+            "caixa_aberto": sessao is not None,
+            "sessao": None,
+            "recebimentos": [],
+            "formas": FORMAS_PAGAMENTO,
+            "taxa_servico_percentual": cfg["taxa_servico_percentual"],
             "impressora_cozinha_ativa": cfg["impressora_cozinha_ativa"],
-        })
+            "impressora_caixa_ativa": cfg["impressora_caixa_ativa"],
+        }
+        if sessao and pode("caixa", "receber"):
+            resumo = banco.resumo_sessao(sessao["id"])
+            # Fechamento "cego": quem fecha o caixa conta o dinheiro sem saber
+            # quanto deveria ter — o valor esperado só aparece depois de fechar
+            # (e nos relatórios).
+            resumo.pop("esperado_dinheiro", None)
+            dados["sessao"] = resumo
+            dados["recebimentos"] = banco.listar_recebimentos(sessao["id"])
+        return jsonify(dados)
+
+    # --- Impressão (em segundo plano: impressora lenta não trava a tela) ------
+
+    def _imprimir(qual: str, gerar, ao_terminar=None) -> None:
+        cfg = banco.config()
+        if not cfg[f"impressora_{qual}_ativa"]:
+            raise ErroNegocio(f"A impressora {'da cozinha' if qual == 'cozinha' else 'do caixa'} está desligada nas configurações.")
+
+        def trabalho():
+            try:
+                impressora.enviar(cfg[f"impressora_{qual}_host"], cfg[f"impressora_{qual}_porta"],
+                                  gerar(cfg["nome_loja"], cfg["impressora_colunas"], cfg["impressora_codificacao"]))
+                resultado = "ok"
+            except impressora.ErroImpressora as exc:
+                log.warning("Falha na impressora %s: %s", qual, exc)
+                resultado = f"erro: {exc}"
+            if ao_terminar:
+                ao_terminar(resultado)
+
+        if impressao_sincrona:
+            trabalho()
+        else:
+            threading.Thread(target=trabalho, daemon=True).start()
+
+    def _imprimir_cozinha(pedido: dict) -> None:
+        banco.registrar_impressao(pedido["id"], "imprimindo")
+        _imprimir("cozinha", lambda loja, col, cod: impressora.cupom_cozinha(pedido, loja, col, cod),
+                  lambda r: banco.registrar_impressao(pedido["id"], r))
 
     # --- Pedidos ---------------------------------------------------------------
 
-    def _imprimir_cozinha(pedido: dict) -> None:
-        cfg = banco.config()
-        if not cfg["impressora_cozinha_ativa"]:
-            return
-
-        def trabalho():
-            try:
-                dados = impressora.cupom_cozinha(pedido, cfg["nome_loja"], cfg["impressora_colunas"],
-                                                 cfg["impressora_codificacao"])
-                impressora.enviar(cfg["impressora_cozinha_host"], cfg["impressora_cozinha_porta"], dados)
-                banco.registrar_impressao(pedido["id"], "ok")
-            except impressora.ErroImpressora as exc:
-                log.warning("Pedido %s não impresso: %s", pedido["codigo"], exc)
-                banco.registrar_impressao(pedido["id"], f"erro: {exc}")
-
-        banco.registrar_impressao(pedido["id"], "imprimindo")
-        if impressao_sincrona:
-            trabalho()
-        else:
-            threading.Thread(target=trabalho, daemon=True).start()
-
-    def _imprimir_senha(senha: dict) -> None:
-        cfg = banco.config()
-        if not cfg["impressora_senhas_ativa"]:
-            return
-
-        def trabalho():
-            try:
-                dados = impressora.cupom_senha(senha, cfg["nome_loja"], PREFIXOS_SENHA[senha["prefixo"]],
-                                               cfg["impressora_colunas"], cfg["impressora_codificacao"])
-                impressora.enviar(cfg["impressora_senhas_host"], cfg["impressora_senhas_porta"], dados)
-                banco.registrar_impressao(senha["id"], "ok")
-            except impressora.ErroImpressora as exc:
-                log.warning("Senha %s não impressa: %s", senha["codigo"], exc)
-                banco.registrar_impressao(senha["id"], f"erro: {exc}")
-
-        if impressao_sincrona:
-            trabalho()
-        else:
-            threading.Thread(target=trabalho, daemon=True).start()
-
     @app.post("/api/pedidos")
-    @exigir_equipe
+    @exigir("pedidos")
     def api_criar_pedido():
         dados = request.get_json(silent=True) or {}
-        pedido = banco.criar_pedido(
-            dados.get("itens"), origem="caixa", mesa=dados.get("mesa", ""),
-            cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""),
-        )
-        _imprimir_cozinha(pedido)
+        pedido = banco.criar_pedido(dados.get("itens"), origem="caixa", mesa=dados.get("mesa", ""),
+                                    cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator())
+        if banco.config()["impressora_cozinha_ativa"]:
+            _imprimir_cozinha(pedido)
         return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"])})
 
     @app.post("/api/pedidos/<int:pedido_id>/status")
-    @exigir_equipe
+    @exigir("pedidos", "cozinha", "cancelar")
     def api_status(pedido_id):
-        status = (request.get_json(silent=True) or {}).get("status")
-        return jsonify({"ok": True, "pedido": banco.mudar_status(pedido_id, status)})
+        dados = request.get_json(silent=True) or {}
+        status = dados.get("status")
+        necessario = {"cancelado": ("cancelar",), "entregue": ("pedidos",)}.get(status, ("cozinha", "pedidos"))
+        if not pode(*necessario):
+            return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
+        return jsonify({"ok": True, "pedido": banco.mudar_status(pedido_id, status, por=ator(), motivo=dados.get("motivo", ""))})
 
     @app.post("/api/pedidos/<int:pedido_id>/chamar")
-    @exigir_equipe
+    @exigir("pedidos")
     def api_chamar(pedido_id):
-        guiche = (request.get_json(silent=True) or {}).get("guiche", "")
-        return jsonify({"ok": True, "pedido": banco.chamar(pedido_id, guiche)})
+        return jsonify({"ok": True, "pedido": banco.chamar(pedido_id, por=ator())})
 
     @app.post("/api/pedidos/<int:pedido_id>/imprimir")
-    @exigir_equipe
+    @exigir("pedidos")
     def api_reimprimir(pedido_id):
         pedido = banco.obter_pedido(pedido_id)
         if not pedido:
             abort(404)
-        if not banco.config()["impressora_cozinha_ativa"]:
-            raise ErroNegocio("A impressora da cozinha está desligada nas configurações.")
         _imprimir_cozinha(pedido)
+        banco.registrar_acao(ator(), "Reimprimiu pedido na cozinha", f"Pedido nº {pedido['codigo']}", pedido_id)
         return jsonify({"ok": True})
 
-    # --- Senhas ------------------------------------------------------------
-
-    @app.post("/api/senhas")
-    @exigir_equipe
-    def api_emitir_senha():
-        dados = request.get_json(silent=True) or {}
-        origem = "totem" if dados.get("origem") == "totem" else "caixa"
-        senha = banco.emitir_senha(dados.get("prefixo", "N"), origem=origem)
-        _imprimir_senha(senha)
-        return jsonify({"ok": True, "senha": senha, "impressa": banco.config()["impressora_senhas_ativa"]})
-
-    @app.post("/api/senhas/chamar-proxima")
-    @exigir_equipe
-    def api_chamar_proxima():
-        guiche = (request.get_json(silent=True) or {}).get("guiche", "")
-        senha = banco.chamar_proxima_senha(guiche)
-        if not senha:
-            return jsonify({"ok": False, "erro": "Nenhuma senha aguardando."})
-        return jsonify({"ok": True, "senha": senha})
-
-    # --- Chamados de garçom -------------------------------------------------
-
     @app.post("/api/garcom/<int:chamado_id>/atender")
-    @exigir_equipe
+    @exigir("pedidos")
     def api_atender_chamado(chamado_id):
-        banco.atender_chamado(chamado_id)
+        banco.atender_chamado(chamado_id, por=ator())
+        return jsonify({"ok": True})
+
+    @app.post("/api/contas/imprimir")
+    @exigir("pedidos", "receber")
+    def api_imprimir_conta():
+        dados = request.get_json(silent=True) or {}
+        pedidos = [banco.obter_pedido(int(i)) for i in dados.get("pedido_ids") or []]
+        pedidos = [p for p in pedidos if p and p["status"] != "cancelado"]
+        if not pedidos:
+            raise ErroNegocio("Nada para imprimir.")
+        titulo = str(dados.get("titulo") or "")[:60]
+        taxa = banco.config()["taxa_servico_percentual"]
+        _imprimir("caixa", lambda loja, col, cod: impressora.cupom_conta(titulo, pedidos, loja, taxa, col, cod))
+        banco.registrar_acao(ator(), "Imprimiu conferência de conta", titulo)
+        return jsonify({"ok": True})
+
+    # --- Caixa e pagamentos --------------------------------------------------
+
+    @app.post("/api/caixa/abrir")
+    @exigir("caixa")
+    def api_abrir_caixa():
+        dados = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, "sessao": banco.abrir_caixa(dados.get("valor_abertura", 0), ator())})
+
+    @app.post("/api/caixa/movimento")
+    @exigir("caixa")
+    def api_movimento():
+        dados = request.get_json(silent=True) or {}
+        banco.movimentar_caixa(dados.get("tipo"), dados.get("valor"), dados.get("motivo", ""), ator())
+        return jsonify({"ok": True})
+
+    def _imprimir_fechamento(resumo: dict) -> None:
+        _imprimir("caixa", lambda loja, col, cod: impressora.cupom_fechamento(resumo, loja, FORMAS_PAGAMENTO, col, cod))
+
+    @app.post("/api/caixa/fechar")
+    @exigir("caixa")
+    def api_fechar_caixa():
+        dados = request.get_json(silent=True) or {}
+        resumo = banco.fechar_caixa(dados.get("valor_contado"), dados.get("observacao", ""), ator())
+        impresso = False
+        if banco.config()["impressora_caixa_ativa"]:
+            _imprimir_fechamento(resumo)
+            impresso = True
+        return jsonify({"ok": True, "sessao": resumo, "impresso": impresso})
+
+    @app.get("/api/caixa/sessoes/<int:sessao_id>")
+    @exigir("caixa", "relatorios")
+    def api_sessao(sessao_id):
+        return jsonify({"sessao": banco.resumo_sessao(sessao_id)})
+
+    @app.post("/api/caixa/sessoes/<int:sessao_id>/imprimir")
+    @exigir("caixa", "relatorios")
+    def api_imprimir_sessao(sessao_id):
+        _imprimir_fechamento(banco.resumo_sessao(sessao_id))
+        banco.registrar_acao(ator(), "Reimprimiu fechamento de caixa", f"Caixa nº {sessao_id}")
+        return jsonify({"ok": True})
+
+    @app.post("/api/recebimentos")
+    @exigir("receber")
+    def api_receber():
+        dados = request.get_json(silent=True) or {}
+        rec = banco.receber(dados.get("pedido_ids"), dados.get("formas"), ator(),
+                            desconto=dados.get("desconto", 0), acrescimo=dados.get("acrescimo", 0))
+        return jsonify({"ok": True, "recebimento": rec})
+
+    @app.post("/api/recebimentos/<int:rid>/estornar")
+    @exigir("cancelar")
+    def api_estornar(rid):
+        banco.estornar_recebimento(rid, (request.get_json(silent=True) or {}).get("motivo", ""), ator())
         return jsonify({"ok": True})
 
     # --- Cliente (QR code da mesa) — público, identificado pelo token ---------
@@ -293,7 +415,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
         return mesa
 
     def _pedido_para_cliente(p: dict) -> dict:
-        return {k: p[k] for k in ("id", "codigo", "status", "itens", "total_centavos", "criado_em", "cliente")}
+        return {k: p[k] for k in ("id", "codigo", "status", "itens", "total_centavos", "criado_em", "cliente", "pago")}
 
     @app.get("/api/cliente/<token>")
     def api_cliente(token):
@@ -306,28 +428,30 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
             "pedidos_ativos": cfg["pedidos_qrcode_ativo"],
             "produtos": banco.listar_produtos(somente_ativos=True),
             "pedidos": [_pedido_para_cliente(p) for p in banco.listar_pedidos(
-                statuses=("novo", "preparando", "pronto", "chamado", "entregue"), tipo="pedido", mesa=mesa["numero"])],
+                statuses=("novo", "preparando", "pronto", "chamado", "entregue"), mesa=mesa["numero"])],
             "chamados": [c["tipo"] for c in banco.chamados_pendentes(mesa["numero"])],
         })
 
     @app.post("/api/cliente/<token>/pedido")
     def api_cliente_pedido(token):
         mesa = _mesa_ou_404(token)
-        if not banco.config()["pedidos_qrcode_ativo"]:
+        cfg = banco.config()
+        if not cfg["pedidos_qrcode_ativo"]:
             raise ErroNegocio("Pedidos pelo QR code estão desativados no momento. Chame um atendente.")
         dados = request.get_json(silent=True) or {}
         pedido = banco.criar_pedido(
             dados.get("itens"), origem="qrcode", mesa=mesa["numero"],
             cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""),
+            por={"id": None, "nome": f"Cliente (mesa {mesa['numero']})"},
         )
-        _imprimir_cozinha(pedido)
+        if cfg["impressora_cozinha_ativa"]:
+            _imprimir_cozinha(pedido)
         return jsonify({"ok": True, "pedido": _pedido_para_cliente(pedido)})
 
     @app.post("/api/cliente/<token>/chamar")
     def api_cliente_chamar(token):
         mesa = _mesa_ou_404(token)
-        tipo = (request.get_json(silent=True) or {}).get("tipo", "garcom")
-        banco.chamar_garcom(mesa["numero"], tipo)
+        banco.chamar_garcom(mesa["numero"], (request.get_json(silent=True) or {}).get("tipo", "garcom"))
         return jsonify({"ok": True})
 
     # --- Painel de chamada (TV) — público, só leitura ------------------------
@@ -359,30 +483,30 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
     # --- Administração: produtos ---------------------------------------------
 
     @app.get("/api/produtos")
-    @exigir_equipe
+    @exigir("cardapio")
     def api_produtos():
         return jsonify({"produtos": banco.listar_produtos()})
 
     @app.post("/api/produtos")
-    @exigir_equipe
+    @exigir("cardapio")
     def api_criar_produto():
-        return jsonify({"ok": True, "produto": banco.criar_produto(request.get_json(silent=True) or {})})
+        return jsonify({"ok": True, "produto": banco.criar_produto(request.get_json(silent=True) or {}, por=ator())})
 
     @app.put("/api/produtos/<int:produto_id>")
-    @exigir_equipe
+    @exigir("cardapio")
     def api_atualizar_produto(produto_id):
-        return jsonify({"ok": True, "produto": banco.atualizar_produto(produto_id, request.get_json(silent=True) or {})})
+        return jsonify({"ok": True, "produto": banco.atualizar_produto(produto_id, request.get_json(silent=True) or {}, por=ator())})
 
     @app.delete("/api/produtos/<int:produto_id>")
-    @exigir_equipe
+    @exigir("cardapio")
     def api_excluir_produto(produto_id):
-        foto_antiga = banco.excluir_produto(produto_id)
+        foto_antiga = banco.excluir_produto(produto_id, por=ator())
         if foto_antiga:
             (pasta_fotos / foto_antiga).unlink(missing_ok=True)
         return jsonify({"ok": True})
 
     @app.post("/api/produtos/<int:produto_id>/foto")
-    @exigir_equipe
+    @exigir("cardapio")
     def api_foto_produto(produto_id):
         produto = banco.obter_produto(produto_id)
         if not produto:
@@ -392,18 +516,18 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
             raise ErroNegocio("Envie uma imagem (JPG, PNG, WEBP...).")
         nome = f"produto-{produto_id}-{uuid.uuid4().hex[:8]}.jpg"
         _salvar_foto(enviado, pasta_fotos / nome, 900)
-        banco.definir_foto_produto(produto_id, nome)
+        banco.definir_foto_produto(produto_id, nome, por=ator())
         if produto["foto"]:
             (pasta_fotos / produto["foto"]).unlink(missing_ok=True)
         return jsonify({"ok": True, "produto": banco.obter_produto(produto_id)})
 
     @app.delete("/api/produtos/<int:produto_id>/foto")
-    @exigir_equipe
+    @exigir("cardapio")
     def api_remover_foto_produto(produto_id):
         produto = banco.obter_produto(produto_id)
         if not produto:
             abort(404)
-        banco.definir_foto_produto(produto_id, None)
+        banco.definir_foto_produto(produto_id, None, por=ator())
         if produto["foto"]:
             (pasta_fotos / produto["foto"]).unlink(missing_ok=True)
         return jsonify({"ok": True})
@@ -414,36 +538,37 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
         return {**mesa, "link": f"{url_base()}/m/{mesa['token']}"}
 
     @app.get("/api/mesas")
-    @exigir_equipe
+    @exigir("mesas")
     def api_mesas():
         return jsonify({"mesas": [_mesa_com_link(m) for m in banco.listar_mesas()], "url_base": url_base()})
 
     @app.post("/api/mesas")
-    @exigir_equipe
+    @exigir("mesas")
     def api_criar_mesas():
         dados = request.get_json(silent=True) or {}
         if dados.get("ate"):
             try:
-                criadas = banco.criar_mesas_em_lote(int(dados.get("de") or 1), int(dados["ate"]))
+                criadas = banco.criar_mesas_em_lote(int(dados.get("de") or 1), int(dados["ate"]), por=ator())
             except (TypeError, ValueError):
                 raise ErroNegocio("Intervalo de mesas inválido.")
         else:
-            criadas = [banco.criar_mesa(dados.get("numero"))]
-        return jsonify({"ok": True, "criadas": len(criadas)})
+            banco.criar_mesa(dados.get("numero"), por=ator())
+            criadas = 1
+        return jsonify({"ok": True, "criadas": criadas})
 
     @app.post("/api/mesas/<int:mesa_id>/novo-qrcode")
-    @exigir_equipe
+    @exigir("mesas")
     def api_novo_qrcode(mesa_id):
-        return jsonify({"ok": True, "mesa": _mesa_com_link(banco.novo_token_mesa(mesa_id))})
+        return jsonify({"ok": True, "mesa": _mesa_com_link(banco.novo_token_mesa(mesa_id, por=ator()))})
 
     @app.delete("/api/mesas/<int:mesa_id>")
-    @exigir_equipe
+    @exigir("mesas")
     def api_excluir_mesa(mesa_id):
-        banco.excluir_mesa(mesa_id)
+        banco.excluir_mesa(mesa_id, por=ator())
         return jsonify({"ok": True})
 
     @app.get("/qrcode/mesa/<int:mesa_id>.svg")
-    @exigir_equipe
+    @exigir("mesas")
     def qrcode_mesa(mesa_id):
         mesa = banco.obter_mesa(mesa_id)
         if not mesa:
@@ -453,20 +578,19 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
         return app.response_class(buf.getvalue(), mimetype="image/svg+xml")
 
     @app.get("/admin/qrcodes")
-    @exigir_equipe
+    @exigir("mesas")
     def imprimir_qrcodes():
-        mesas = [_mesa_com_link(m) for m in banco.listar_mesas()]
-        return render_template("qrcodes.html", mesas=mesas, loja=banco.config()["nome_loja"])
+        return render_template("qrcodes.html", mesas=[_mesa_com_link(m) for m in banco.listar_mesas()])
 
     # --- Administração: mídias do painel -------------------------------------
 
     @app.get("/api/midias")
-    @exigir_equipe
+    @exigir("midias")
     def api_midias():
         return jsonify({"midias": banco.listar_midias()})
 
     @app.post("/api/midias")
-    @exigir_equipe
+    @exigir("midias")
     def api_enviar_midias():
         enviados = request.files.getlist("arquivos")
         if not enviados:
@@ -481,11 +605,11 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
                 except ErroNegocio:
                     recusados.append(enviado.filename)
                     continue
-                banco.adicionar_midia(nome, "foto", enviado.filename)
+                banco.adicionar_midia(nome, "foto", enviado.filename, por=ator())
             elif ext in EXT_VIDEO:
                 nome = f"{uuid.uuid4().hex}{ext}"
                 enviado.save(pasta_midias / nome)
-                banco.adicionar_midia(nome, "video", enviado.filename)
+                banco.adicionar_midia(nome, "video", enviado.filename, por=ator())
             else:
                 recusados.append(enviado.filename)
                 continue
@@ -493,19 +617,19 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
         return jsonify({"ok": True, "adicionadas": adicionadas, "recusados": recusados})
 
     @app.put("/api/midias/<int:midia_id>")
-    @exigir_equipe
+    @exigir("midias")
     def api_atualizar_midia(midia_id):
         dados = request.get_json(silent=True) or {}
         if "mover" in dados:
-            banco.mover_midia(midia_id, int(dados["mover"]))
+            banco.mover_midia(midia_id, int(dados["mover"]), por=ator())
         else:
-            banco.atualizar_midia(midia_id, dados)
+            banco.atualizar_midia(midia_id, dados, por=ator())
         return jsonify({"ok": True})
 
     @app.delete("/api/midias/<int:midia_id>")
-    @exigir_equipe
+    @exigir("midias")
     def api_excluir_midia(midia_id):
-        arquivo = banco.excluir_midia(midia_id)
+        arquivo = banco.excluir_midia(midia_id, por=ator())
         if arquivo:
             (pasta_midias / arquivo).unlink(missing_ok=True)
         return jsonify({"ok": True})
@@ -513,47 +637,87 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao: str = "", impres
     # --- Administração: configurações ----------------------------------------
 
     @app.get("/api/config")
-    @exigir_equipe
+    @exigir("configuracoes")
     def api_config():
-        return jsonify({"config": banco.config_publica(), "url_base_detectada": url_base_padrao})
+        padrao = url_base_padrao() if callable(url_base_padrao) else url_base_padrao
+        return jsonify({"config": banco.config_publica(), "url_base_detectada": padrao})
 
     @app.put("/api/config")
-    @exigir_equipe
+    @exigir("configuracoes")
     def api_salvar_config():
         dados = dict(request.get_json(silent=True) or {})
-        novo_pin = dados.pop("novo_pin", None)
-        remover_pin = dados.pop("remover_pin", False)
-        for chave in ("pin_hash", "secret_key"):
-            dados.pop(chave, None)
-        if novo_pin:
-            novo_pin = str(novo_pin).strip()
-            if not novo_pin.isdigit() or not 4 <= len(novo_pin) <= 12:
-                raise ErroNegocio("O PIN deve ter de 4 a 12 números.")
-            dados["pin_hash"] = generate_password_hash(novo_pin)
-            session.permanent = True
-            session["equipe"] = True  # quem definiu o PIN continua logado
-        elif remover_pin:
-            dados["pin_hash"] = ""
-        banco.salvar_config(dados)
+        dados.pop("secret_key", None)
+        banco.salvar_config(dados, por=ator())
         return jsonify({"ok": True, "config": banco.config_publica()})
 
     @app.post("/api/impressora/teste")
-    @exigir_equipe
+    @exigir("configuracoes")
     def api_teste_impressora():
         qual = (request.get_json(silent=True) or {}).get("qual", "cozinha")
-        if qual not in ("cozinha", "senhas"):
+        if qual not in ("cozinha", "caixa"):
             raise ErroNegocio("Impressora inválida.")
         cfg = banco.config()
         cupom = impressora.Cupom(cfg["impressora_colunas"], cfg["impressora_codificacao"])
         cupom.cmd(impressora.ALINHAR_CENTRO).linha(cfg["nome_loja"])
         cupom.cmd(impressora.TAMANHO_DUPLO).linha("TESTE OK").cmd(impressora.TAMANHO_NORMAL)
-        cupom.linha(f"Impressora de {qual}").linha("Acentuação: ção ã é ê ó ú ç")
+        cupom.linha(f"Impressora do(a) {qual}").linha("Acentuação: ção ã é ê ó ú ç")
         cupom.separador()
         try:
             impressora.enviar(cfg[f"impressora_{qual}_host"], cfg[f"impressora_{qual}_porta"], cupom.bytes())
         except impressora.ErroImpressora as exc:
             raise ErroNegocio(str(exc))
         return jsonify({"ok": True})
+
+    # --- Administração: usuários e permissões --------------------------------
+
+    @app.get("/api/usuarios")
+    @exigir("usuarios")
+    def api_usuarios():
+        return jsonify({
+            "usuarios": banco.listar_usuarios(),
+            "permissoes": PERMISSOES,
+            "modelos": {k: {"nome": nome, "permissoes": perms} for k, (nome, perms) in MODELOS.items()},
+        })
+
+    @app.post("/api/usuarios")
+    @exigir("usuarios")
+    def api_criar_usuario():
+        return jsonify({"ok": True, "usuario": banco.criar_usuario(request.get_json(silent=True) or {}, por=ator())})
+
+    @app.put("/api/usuarios/<int:usuario_id>")
+    @exigir("usuarios")
+    def api_atualizar_usuario(usuario_id):
+        return jsonify({"ok": True, "usuario": banco.atualizar_usuario(usuario_id, request.get_json(silent=True) or {}, por=ator())})
+
+    # --- Relatórios e histórico ----------------------------------------------
+
+    def _periodo_args():
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        return request.args.get("de") or hoje, request.args.get("ate") or hoje
+
+    @app.get("/api/relatorios")
+    @exigir("relatorios")
+    def api_relatorio():
+        de, ate = _periodo_args()
+        return jsonify({"relatorio": banco.relatorio(de, ate), "formas": FORMAS_PAGAMENTO})
+
+    @app.get("/api/relatorios/vendas.csv")
+    @exigir("relatorios")
+    def api_vendas_csv():
+        de, ate = _periodo_args()
+        banco.registrar_acao(ator(), "Exportou planilha de vendas", f"{de} a {ate}")
+        return Response(banco.vendas_csv(de, ate), mimetype="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename=vendas_{de}_a_{ate}.csv"})
+
+    @app.get("/api/auditoria")
+    @exigir("historico")
+    def api_auditoria():
+        de, ate = _periodo_args()
+        return jsonify({
+            "registros": banco.listar_auditoria(de, ate, request.args.get("usuario_id") or None,
+                                                request.args.get("busca", "").strip()),
+            "usuarios": [{"id": u["id"], "nome": u["nome"]} for u in banco.listar_usuarios()],
+        })
 
     return app
 

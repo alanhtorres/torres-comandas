@@ -7,17 +7,38 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='caixa.css') }}">
 </head>
-<body>
+<body data-pode-pedidos="{{ pode('pedidos')|int }}" data-pode-receber="{{ pode('receber')|int }}"
+      data-pode-caixa="{{ pode('caixa')|int }}" data-pode-cancelar="{{ pode('cancelar')|int }}">
   <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
   <header class="topo">
     <h1>🧾 Caixa <span id="nome-loja" style="color: var(--texto-2); font-weight: 400"></span></h1>
     <span class="espaco"></span>
-    <nav><a href="/">Início</a><a href="/cozinha">Cozinha</a><a href="/painel" target="_blank">Painel</a><a href="/admin">Administração</a></nav>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong> <a href="/sair">trocar usuário</a></span>
+    <nav>
+      <a href="/">Início</a>
+      {% if pode('cozinha') %}<a href="/cozinha">Cozinha</a>{% endif %}
+      <a href="/painel" target="_blank">Painel</a>
+      {% if pode('cardapio', 'mesas', 'midias', 'configuracoes', 'relatorios', 'historico', 'usuarios') %}<a href="/admin">Administração</a>{% endif %}
+    </nav>
   </header>
+
+  {% if pode('caixa', 'receber') %}
+  <section id="barra-caixa" class="barra-caixa">
+    <span id="status-caixa">Carregando...</span>
+    <span class="espaco"></span>
+    {% if pode('caixa') %}
+    <button id="abrir-caixa" class="verde" hidden>Abrir caixa</button>
+    <button id="sangria" hidden>− Sangria</button>
+    <button id="suprimento" hidden>+ Suprimento</button>
+    <button id="fechar-caixa" class="amarelo" hidden>Fechar caixa</button>
+    {% endif %}
+  </section>
+  {% endif %}
 
   <div id="chamados-garcom"></div>
 
-  <main class="colunas">
+  <main class="colunas{% if not pode('pedidos') %} sem-pedido{% endif %}">
+    {% if pode('pedidos') %}
     <section class="coluna-pedido">
       <div class="cartao">
         <h2>Novo pedido</h2>
@@ -35,40 +56,33 @@
         </div>
         <label for="obs">Observação para a cozinha</label>
         <input id="obs" maxlength="300" placeholder="Opcional">
-        <div class="total-linha">
-          <span>Total</span><strong id="total">R$ 0,00</strong>
-        </div>
+        <div class="total-linha"><span>Total</span><strong id="total">R$ 0,00</strong></div>
         <div class="acoes-carrinho">
           <button id="limpar" class="discreto">Limpar</button>
           <button id="enviar" class="primario grande" disabled>Enviar para a cozinha</button>
+          {% if pode('receber') %}<button id="enviar-receber" class="verde grande" disabled title="Envia para a cozinha e já abre o pagamento">Enviar e receber</button>{% endif %}
         </div>
       </div>
     </section>
+    {% endif %}
 
     <section class="coluna-lista">
-      <div class="cartao senhas">
-        <h2>Senhas de atendimento</h2>
-        <div class="fila">
-          <div><span class="rotulo">Normal</span><strong id="fila-N">0</strong></div>
-          <div><span class="rotulo">Preferencial</span><strong id="fila-P">0</strong></div>
-        </div>
-        <div class="linha-botoes">
-          <button id="emitir-N">+ Senha normal</button>
-          <button id="emitir-P">+ Preferencial</button>
-        </div>
-        <div class="linha-botoes">
-          <input id="guiche" maxlength="20" placeholder="Guichê" style="max-width: 110px">
-          <button id="chamar-proxima" class="amarelo" style="flex: 1">📢 Chamar próxima senha</button>
-        </div>
-        <div id="senhas-chamadas"></div>
-      </div>
+      <nav class="abas-caixa">
+        {% if pode('pedidos') %}<button data-aba="pedidos" class="ativa">Pedidos</button>{% endif %}
+        <button data-aba="contas">A receber <span id="n-contas" class="etiqueta">0</span></button>
+        {% if pode('receber', 'caixa') %}<button data-aba="recebidos">Recebidos <span id="n-recebidos" class="etiqueta">0</span></button>{% endif %}
+      </nav>
 
-      <h3 class="titulo-secao">Prontos — chamar cliente <span id="n-prontos" class="etiqueta pronto">0</span></h3>
-      <div id="lista-prontos"></div>
-      <h3 class="titulo-secao">Na cozinha <span id="n-cozinha" class="etiqueta">0</span></h3>
-      <div id="lista-cozinha"></div>
-      <h3 class="titulo-secao">Chamados — aguardando retirada <span id="n-chamados" class="etiqueta chamado">0</span></h3>
-      <div id="lista-chamados"></div>
+      <div id="aba-pedidos" class="aba-caixa">
+        <h3 class="titulo-secao">Prontos — chamar cliente <span id="n-prontos" class="etiqueta pronto">0</span></h3>
+        <div id="lista-prontos"></div>
+        <h3 class="titulo-secao">Na cozinha <span id="n-cozinha" class="etiqueta">0</span></h3>
+        <div id="lista-cozinha"></div>
+        <h3 class="titulo-secao">Chamados — aguardando retirada <span id="n-chamados" class="etiqueta chamado">0</span></h3>
+        <div id="lista-chamados"></div>
+      </div>
+      <div id="aba-contas" class="aba-caixa" hidden></div>
+      <div id="aba-recebidos" class="aba-caixa" hidden></div>
     </section>
   </main>
 

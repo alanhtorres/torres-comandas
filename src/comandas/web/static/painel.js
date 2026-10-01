@@ -12,13 +12,6 @@
   // --- Chamadas ---------------------------------------------------------------
 
   function textos(c) {
-    if (c.tipo === "senha") {
-      return {
-        rotulo: "Senha chamada",
-        detalhe: c.guiche ? "Guichê " + c.guiche : "",
-        fala: "Senha " + c.codigo.replace(/^([A-Z])0*/, "$1, ") + (c.guiche ? ", guichê " + c.guiche : ""),
-      };
-    }
     const quem = c.cliente || (c.mesa ? "Mesa " + c.mesa : "");
     return {
       rotulo: "Pedido pronto — pode retirar",

@@ -18,16 +18,45 @@
   </style>
 </head>
 <body>
-  <header class="topo"><h1>{{ loja }}</h1><span class="espaco"></span><nav><a href="/sair">Sair</a></nav></header>
+  <header class="topo">
+    <h1>{{ loja }}</h1><span class="espaco"></span>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
+    <nav><a href="#" id="trocar-senha">Trocar minha senha</a><a href="/sair">Sair</a></nav>
+  </header>
   <main>
-    <p style="color: var(--texto-2)">Abra cada tela no aparelho onde ela vai ficar (qualquer navegador na mesma rede):</p>
+    <p style="color: var(--texto-2)">Abra cada tela no aparelho onde ela vai ficar (qualquer navegador na mesma rede da loja):</p>
     <div class="grade">
-      <a href="/caixa"><div class="cartao"><div class="icone">🧾</div><h2>Caixa</h2><p>Lança pedidos, chama o cliente no painel, emite e chama senhas, recebe os chamados de garçom.</p><code>{{ url_base }}/caixa</code></div></a>
-      <a href="/cozinha"><div class="cartao"><div class="icone">👨‍🍳</div><h2>Cozinha</h2><p>Tela com os pedidos a preparar. Marque "Pronto" quando terminar.</p><code>{{ url_base }}/cozinha</code></div></a>
-      <a href="/painel"><div class="cartao"><div class="icone">📺</div><h2>Painel de chamada (TV)</h2><p>Mostra os pedidos prontos/senhas chamadas + fotos e vídeos dos produtos.</p><code>{{ url_base }}/painel</code></div></a>
-      <a href="/totem"><div class="cartao"><div class="icone">🎫</div><h2>Totem de senhas</h2><p>O cliente retira a própria senha (normal ou preferencial). Ideal para lotéricas, clínicas, balcões.</p><code>{{ url_base }}/totem</code></div></a>
-      <a href="/admin"><div class="cartao"><div class="icone">⚙️</div><h2>Administração</h2><p>Cardápio, mesas e QR codes, mídias do painel, impressoras, PIN.</p><code>{{ url_base }}/admin</code></div></a>
+      {% if pode('pedidos', 'receber', 'caixa') %}
+      <a href="/caixa"><div class="cartao"><div class="icone">🧾</div><h2>Caixa</h2><p>Lançar pedidos, chamar o cliente no painel, receber pagamentos, abrir e fechar o caixa.</p><code>{{ url_base }}/caixa</code></div></a>
+      {% endif %}
+      {% if pode('cozinha') %}
+      <a href="/cozinha"><div class="cartao"><div class="icone">👨‍🍳</div><h2>Cozinha</h2><p>Pedidos a preparar. Marque "Pronto" quando terminar.</p><code>{{ url_base }}/cozinha</code></div></a>
+      {% endif %}
+      <a href="/painel"><div class="cartao"><div class="icone">📺</div><h2>Painel de chamada (TV)</h2><p>Pedidos prontos + fotos e vídeos dos produtos. Não precisa de login.</p><code>{{ url_base }}/painel</code></div></a>
+      {% if pode(*permissoes_admin) %}
+      <a href="/admin"><div class="cartao"><div class="icone">⚙️</div><h2>Administração</h2><p>Cardápio, mesas e QR codes, relatórios do caixa, usuários e permissões, histórico.</p><code>{{ url_base }}/admin</code></div></a>
+      {% endif %}
     </div>
   </main>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script>
+    document.getElementById("trocar-senha").addEventListener("click", (e) => {
+      e.preventDefault();
+      const atual = C.el("input", { type: "password", autocomplete: "current-password", required: true });
+      const nova = C.el("input", { type: "password", autocomplete: "new-password", minlength: 4, required: true });
+      const conf = C.el("input", { type: "password", autocomplete: "new-password", minlength: 4, required: true });
+      C.dialogo({
+        titulo: "Trocar minha senha",
+        corpo: C.el("div", {}, C.el("label", {}, "Senha atual"), atual, C.el("label", {}, "Nova senha"), nova,
+          C.el("label", {}, "Repita a nova senha"), conf),
+        confirmar: "Salvar",
+        aoConfirmar: async () => {
+          if (nova.value !== conf.value) throw new Error("As senhas novas não conferem.");
+          await C.api("POST", "/api/minha-senha", { atual: atual.value, nova: nova.value });
+          C.aviso("Senha alterada", "ok");
+        },
+      });
+    });
+  </script>
 </body>
 </html>

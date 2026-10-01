@@ -7,7 +7,9 @@ import os
 import socket
 import sys
 import threading
+import time
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 from .banco import Banco
@@ -30,16 +32,65 @@ def pasta_dados() -> Path:
     return pasta
 
 
+def _ip_privado(ip: str) -> bool:
+    return ip.startswith(("192.168.", "10.")) or (ip.startswith("172.") and 16 <= int(ip.split(".")[1]) <= 31)
+
+
 def ip_na_rede() -> str:
+    """IP deste PC na rede da loja. Não depende de internet: o "connect" em
+    UDP não envia nada, só pergunta ao Windows qual placa de rede seria
+    usada. Se nem isso der (PC sem rota padrão), procura um IP de rede
+    local entre os endereços do próprio PC."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # UDP não envia nada: só faz o sistema escolher a placa de rede usada.
         s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
+        ip = s.getsockname()[0]
+        if ip and not ip.startswith("127."):
+            return ip
     except OSError:
-        return "127.0.0.1"
+        pass
     finally:
         s.close()
+    try:
+        candidatos = socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        candidatos = []
+    privados = [ip for ip in candidatos if _ip_privado(ip)]
+    return privados[0] if privados else "127.0.0.1"
+
+
+class EnderecoRede:
+    """Endereço do servidor na rede, redescoberto a cada minuto: se o PC
+    ligou antes do roteador, ou o IP mudou, os QR codes novos já saem certos
+    sem precisar reiniciar o programa."""
+
+    def __init__(self, porta: int, validade: float = 60):
+        self.porta = porta
+        self.validade = validade
+        self._valor = None
+        self._quando = 0.0
+        self._lock = threading.Lock()
+
+    def __call__(self) -> str:
+        with self._lock:
+            if self._valor is None or time.time() - self._quando > self.validade or "127.0.0.1" in self._valor:
+                self._valor = f"http://{ip_na_rede()}:{self.porta}"
+                self._quando = time.time()
+            return self._valor
+
+
+def backup_diario(banco: Banco, pasta: Path, manter: int = 30) -> None:
+    """Uma cópia do banco por dia na pasta backups/, guardando os últimos
+    `manter` dias. Protege contra arquivo corrompido (queda de energia,
+    disco com defeito) — copie essa pasta para um pendrive de vez em quando."""
+    pasta.mkdir(parents=True, exist_ok=True)
+    destino = pasta / f"comandas-{datetime.now():%Y-%m-%d}.db"
+    if not destino.exists():
+        banco.fazer_backup(destino)
+        logging.getLogger("comandas").info("Backup do dia salvo em %s", destino)
+    antigos = sorted(pasta.glob("comandas-*.db"))[:-manter]
+    for arquivo in antigos:
+        arquivo.unlink(missing_ok=True)
 
 
 def porta_configurada(dados: Path) -> int:
@@ -58,13 +109,14 @@ def porta_configurada(dados: Path) -> int:
     return PORTA_PADRAO
 
 
-def porta_ocupada(host: str, porta: int) -> bool:
+def ja_esta_rodando(porta: int) -> bool:
+    """Tem algum programa de fato atendendo nessa porta? Testa conectando
+    (e não tentando ocupar a porta), porque logo depois de fechar o programa
+    o sistema mantém a porta "esfriando" por um tempo — e isso não pode
+    impedir o servidor de subir de novo após um reinício rápido."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind((host, porta))
-            return False
-        except OSError:
-            return True
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", porta)) == 0
 
 
 def main() -> None:
@@ -85,18 +137,29 @@ def main() -> None:
     log = logging.getLogger("comandas")
 
     url_local = f"http://localhost:{porta}"
-    url_rede = f"http://{ip_na_rede()}:{porta}"
+    endereco = EnderecoRede(porta)
+    url_rede = endereco()
 
     # Programa aberto duas vezes (ex.: clicou no atalho com ele já rodando
     # pela inicialização do Windows): só abre a tela inicial do que já está no ar.
-    if porta_ocupada(args.host, porta):
+    if ja_esta_rodando(porta):
         log.warning("Porta %s já está em uso — provavelmente o Torres Comandas já está aberto.", porta)
         if not args.sem_bandeja:
             webbrowser.open(url_local + "/")
         return
 
     banco = Banco(dados / "comandas.db")
-    app = criar_app(banco, dados, url_base_padrao=url_rede)
+    app = criar_app(banco, dados, url_base_padrao=endereco)
+
+    def backups():
+        while True:
+            try:
+                backup_diario(banco, dados / "backups")
+            except Exception:
+                logging.getLogger("comandas").exception("Falha no backup automático")
+            time.sleep(3600)
+
+    threading.Thread(target=backups, daemon=True, name="backup").start()
 
     def servir():
         try:
@@ -108,7 +171,7 @@ def main() -> None:
 
     log.info("Torres Comandas rodando. Dados em %s", dados)
     for nome, caminho in (("Início / links", "/"), ("Caixa", "/caixa"), ("Cozinha", "/cozinha"),
-                          ("Painel (TV)", "/painel"), ("Totem de senhas", "/totem"), ("Administração", "/admin")):
+                          ("Painel (TV)", "/painel"), ("Administração", "/admin")):
         log.info("  %-16s %s%s", nome, url_rede, caminho)
 
     if args.sem_bandeja:

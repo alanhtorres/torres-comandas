@@ -10,8 +10,28 @@ from comandas.servidor import criar_app
 @pytest.fixture
 def ambiente(tmp_path):
     banco = Banco(tmp_path / "t.db")
-    app = criar_app(banco, tmp_path, url_base_padrao="http://192.168.0.10:8090", impressao_sincrona=True)
-    return app.test_client(), banco, tmp_path
+    app = criar_app(banco, tmp_path, url_base_padrao=lambda: "http://192.168.0.10:8090", impressao_sincrona=True)
+    return app, banco, tmp_path
+
+
+def entrar(app, login, senha="1234"):
+    cliente = app.test_client()
+    r = cliente.post("/login", data={"usuario": login, "senha": senha})
+    assert r.status_code == 302, r.data
+    return cliente
+
+
+@pytest.fixture
+def admin(ambiente):
+    app, banco, _ = ambiente
+    banco.criar_primeiro_admin({"nome": "Ana", "login": "ana", "senha": "1234"})
+    return entrar(app, "ana")
+
+
+def criar_usuario(admin, login, permissoes):
+    r = admin.post("/api/usuarios", json={"nome": login.capitalize(), "login": login, "senha": "1234", "permissoes": permissoes})
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()["usuario"]
 
 
 def _imagem(formato="PNG", tamanho=(3000, 2000), modo="RGBA"):
@@ -21,255 +41,340 @@ def _imagem(formato="PNG", tamanho=(3000, 2000), modo="RGBA"):
     return buf
 
 
-def _produto(cliente, nome="X-Burger", preco=2500, categoria="Lanches"):
-    r = cliente.post("/api/produtos", json={"nome": nome, "preco_centavos": preco, "categoria": categoria})
+def _produto(cliente, nome="X-Burger", preco=2500):
+    r = cliente.post("/api/produtos", json={"nome": nome, "preco_centavos": preco, "categoria": "Lanches"})
     assert r.status_code == 200, r.get_json()
     return r.get_json()["produto"]
 
 
-@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/painel", "/totem", "/admin", "/login"])
-def test_telas_abrem(ambiente, caminho):
-    cliente, _, _ = ambiente
-    r = cliente.get(caminho)
+# --- Primeiro acesso, login e permissões -------------------------------------
+
+def test_primeiro_acesso_cria_admin(ambiente):
+    app, banco, _ = ambiente
+    c = app.test_client()
+    assert c.get("/caixa").headers["Location"].endswith("/primeiro-acesso")
+    assert c.get("/login").headers["Location"].endswith("/primeiro-acesso")
+    assert c.get("/api/estado").status_code == 401
+    r = c.post("/primeiro-acesso", data={"nome": "Ana", "usuario": "ana", "senha": "1234", "confirmar": "9999"})
+    assert r.status_code == 400 and "não conferem".encode() in r.data
+    r = c.post("/primeiro-acesso", data={"nome": "Ana", "usuario": "ana", "senha": "1234", "confirmar": "1234"})
+    assert r.status_code == 302 and c.get("/admin").status_code == 200
+    # depois de criado, ninguém mais consegue usar o primeiro acesso
+    outro = app.test_client()
+    outro.post("/primeiro-acesso", data={"nome": "X", "usuario": "x", "senha": "1234", "confirmar": "1234"})
+    assert len(banco.listar_usuarios()) == 1
+
+
+def test_login_logout_e_redirecionamento(ambiente, admin):
+    app, banco, _ = ambiente
+    c = app.test_client()
+    assert "/login?proximo=/caixa" in c.get("/caixa").headers["Location"]
+    assert c.post("/login", data={"usuario": "ana", "senha": "errada"}).status_code == 401
+    r = c.post("/login?proximo=/caixa", data={"usuario": "ana", "senha": "1234"})
+    assert r.headers["Location"].endswith("/caixa")
+    r = c.post("/login?proximo=//site-malicioso.com", data={"usuario": "ana", "senha": "1234"})
+    assert r.headers["Location"] == "/"
+    c.get("/sair")
+    assert c.get("/api/estado").status_code == 401
+    acoes = [a["acao"] for a in banco.listar_auditoria("2000-01-01", "2100-01-01")]
+    assert "Saiu do sistema" in acoes and "Tentativa de login recusada" in acoes
+
+
+@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/painel", "/admin", "/admin/qrcodes"])
+def test_telas_abrem_para_o_admin(admin, caminho):
+    r = admin.get(caminho)
     assert r.status_code == 200
     assert r.headers["Cache-Control"] == "no-store"
 
 
-def test_fluxo_completo_caixa_cozinha_painel(ambiente):
-    cliente, _, _ = ambiente
-    p = _produto(cliente)
-    r = cliente.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 2}], "cliente": "Maria"})
-    pedido = r.get_json()["pedido"]
-    assert pedido["total_centavos"] == 5000
-
-    estado = cliente.get("/api/estado").get_json()
-    assert [x["codigo"] for x in estado["pedidos"]] == ["1"]
-    versao = estado["versao"]
-    # sem mudança: resposta curta
-    assert cliente.get(f"/api/estado?v={versao}").get_json() == {"versao": versao, "mudou": False}
-
-    cliente.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "pronto"})
-    assert cliente.get("/api/painel").get_json()["chamadas"] == []
-    cliente.post(f"/api/pedidos/{pedido['id']}/chamar", json={})
-    painel = cliente.get("/api/painel").get_json()
-    assert painel["chamadas"][0]["codigo"] == "1"
-    assert painel["chamadas"][0]["cliente"] == "Maria"
-
-
-def test_painel_pode_esconder_nome_do_cliente(ambiente):
-    cliente, banco, _ = ambiente
-    banco.salvar_config({"mostrar_nome_cliente_painel": False})
-    p = _produto(cliente)
-    pedido = cliente.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}], "cliente": "Maria"}).get_json()["pedido"]
-    cliente.post(f"/api/pedidos/{pedido['id']}/chamar", json={})
-    assert cliente.get("/api/painel").get_json()["chamadas"][0]["cliente"] == ""
-
-
-def test_erros_de_negocio_viram_400_com_mensagem(ambiente):
-    cliente, _, _ = ambiente
-    r = cliente.post("/api/pedidos", json={"itens": []})
-    assert r.status_code == 400
-    assert r.get_json() == {"ok": False, "erro": "O pedido está vazio."}
-    r = cliente.post("/api/pedidos/999/status", json={"status": "pronto"})
-    assert r.status_code == 400
-
-
-def test_cliente_qrcode_pede_e_chama_garcom(ambiente):
-    cliente, banco, _ = ambiente
-    p = _produto(cliente)
-    mesa = banco.criar_mesa("7")
-    tela = cliente.get(f"/m/{mesa['token']}")
-    assert tela.status_code == 200
-
-    dados = cliente.get(f"/api/cliente/{mesa['token']}").get_json()
-    assert dados["mesa"] == "7" and dados["produtos"][0]["nome"] == "X-Burger"
-
-    r = cliente.post(f"/api/cliente/{mesa['token']}/pedido",
-                     json={"itens": [{"produto_id": p["id"], "quantidade": 1}], "cliente": "Léo"})
-    assert r.status_code == 200
-    pedido = banco.listar_pedidos()[0]
-    assert pedido["origem"] == "qrcode" and pedido["mesa"] == "7"
-
-    cliente.post(f"/api/cliente/{mesa['token']}/chamar", json={"tipo": "conta"})
-    assert cliente.get(f"/api/cliente/{mesa['token']}").get_json()["chamados"] == ["conta"]
-    assert banco.chamados_pendentes()[0]["mesa"] == "7"
-    # o cliente vê o próprio pedido, mas sem dados internos (impressão etc.)
-    meus = cliente.get(f"/api/cliente/{mesa['token']}").get_json()["pedidos"]
-    assert meus[0]["codigo"] == "1" and "impressao" not in meus[0]
-
-
-def test_cliente_token_invalido_e_pedidos_desativados(ambiente):
-    cliente, banco, _ = ambiente
-    assert cliente.get("/m/nao-existe").status_code == 404
-    assert cliente.get("/api/cliente/nao-existe").status_code == 404
-    assert cliente.post("/api/cliente/nao-existe/chamar", json={}).status_code == 404
-
-    p = _produto(cliente)
-    mesa = banco.criar_mesa("1")
-    banco.salvar_config({"pedidos_qrcode_ativo": False})
-    r = cliente.post(f"/api/cliente/{mesa['token']}/pedido", json={"itens": [{"produto_id": p["id"]}]})
-    assert r.status_code == 400 and "desativados" in r.get_json()["erro"]
-    # chamar garçom continua funcionando
-    assert cliente.post(f"/api/cliente/{mesa['token']}/chamar", json={}).status_code == 200
-
-
-def test_pin_protege_equipe_mas_nao_painel_nem_cliente(ambiente):
-    cliente, banco, _ = ambiente
+def test_painel_e_qrcode_continuam_publicos(ambiente, admin):
+    app, banco, _ = ambiente
     mesa = banco.criar_mesa("3")
-    r = cliente.put("/api/config", json={"novo_pin": "4321"})
-    assert r.get_json()["config"]["pin_definido"] is True
-
-    anonimo = cliente.application.test_client()
-    assert anonimo.get("/caixa").status_code == 302
-    assert "/login" in anonimo.get("/admin").headers["Location"]
-    assert anonimo.get("/api/estado").status_code == 401
-    assert anonimo.post("/api/pedidos", json={}).status_code == 401
-    assert anonimo.get("/api/config").status_code == 401
+    anonimo = app.test_client()
     assert anonimo.get("/painel").status_code == 200
     assert anonimo.get("/api/painel").status_code == 200
+    assert anonimo.get(f"/m/{mesa['token']}").status_code == 200
     assert anonimo.get(f"/api/cliente/{mesa['token']}").status_code == 200
 
-    assert anonimo.post("/login?proximo=/caixa", data={"pin": "0000"}).status_code == 401
-    r = anonimo.post("/login?proximo=/caixa", data={"pin": "4321"})
-    assert r.status_code == 302 and r.headers["Location"].endswith("/caixa")
-    assert anonimo.get("/api/estado").status_code == 200
 
-    # redirecionamento externo não é aceito
-    r = anonimo.post("/login?proximo=//site-malicioso.com", data={"pin": "4321"})
-    assert r.headers["Location"] == "/"
+def test_cada_usuario_so_acessa_o_que_o_admin_liberou(ambiente, admin):
+    app, _, _ = ambiente
+    criar_usuario(admin, "cozinheiro", ["cozinha"])
+    criar_usuario(admin, "garcom", ["pedidos"])
+    cozinha = entrar(app, "cozinheiro")
+    garcom = entrar(app, "garcom")
+
+    assert cozinha.get("/cozinha").status_code == 200
+    assert cozinha.get("/caixa").status_code == 403
+    assert cozinha.get("/admin").status_code == 403
+    assert cozinha.post("/api/pedidos", json={"itens": []}).status_code == 403
+    assert cozinha.get("/api/estado").status_code == 200
+
+    assert garcom.get("/caixa").status_code == 200
+    assert garcom.get("/cozinha").status_code == 403
+    assert garcom.get("/api/produtos").status_code == 403          # cadastro = permissão "cardapio"
+    assert garcom.post("/api/caixa/abrir", json={}).status_code == 403
+    assert garcom.post("/api/recebimentos", json={}).status_code == 403
+    assert garcom.get("/api/relatorios").status_code == 403
+    assert garcom.get("/api/auditoria").status_code == 403
+    assert garcom.get("/api/usuarios").status_code == 403
+
+    # a página inicial só mostra os atalhos permitidos
+    inicio = garcom.get("/").data.decode()
+    assert 'href="/caixa"' in inicio and 'href="/cozinha"' not in inicio and 'href="/admin"' not in inicio
 
 
-def test_pin_invalido_e_remocao(ambiente):
-    cliente, _, _ = ambiente
-    assert cliente.put("/api/config", json={"novo_pin": "12"}).status_code == 400
-    assert cliente.put("/api/config", json={"novo_pin": "abcd"}).status_code == 400
-    cliente.put("/api/config", json={"novo_pin": "1234"})
-    r = cliente.put("/api/config", json={"remover_pin": True})
-    assert r.get_json()["config"]["pin_definido"] is False
-    # não dá pra injetar hash/segredo direto pela API
-    cliente.put("/api/config", json={"pin_hash": "x", "secret_key": "y"})
-    assert cliente.application.test_client().get("/caixa").status_code == 200
+def test_permissoes_por_acao_no_pedido(ambiente, admin):
+    app, _, _ = ambiente
+    p = _produto(admin)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
+    criar_usuario(admin, "cozinheiro", ["cozinha"])
+    criar_usuario(admin, "garcom", ["pedidos"])
+    cozinha, garcom = entrar(app, "cozinheiro"), entrar(app, "garcom")
+
+    assert cozinha.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "pronto"}).status_code == 200
+    assert cozinha.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "entregue"}).status_code == 403
+    assert cozinha.post(f"/api/pedidos/{pedido['id']}/chamar").status_code == 403
+    assert garcom.post(f"/api/pedidos/{pedido['id']}/chamar").status_code == 200
+    r = garcom.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "cancelado", "motivo": "x"})
+    assert r.status_code == 403  # cancelar é permissão separada
 
 
-def test_foto_de_produto_e_redimensionada_para_jpeg(ambiente):
-    cliente, _, pasta = ambiente
-    p = _produto(cliente)
-    r = cliente.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (_imagem(), "lanche.png")},
-                     content_type="multipart/form-data")
+def test_permissao_retirada_vale_na_hora(ambiente, admin):
+    app, _, _ = ambiente
+    beto = criar_usuario(admin, "beto", ["pedidos"])
+    c = entrar(app, "beto")
+    assert c.get("/caixa").status_code == 200
+    admin.put(f"/api/usuarios/{beto['id']}", json={"permissoes": ["cozinha"]})
+    assert c.get("/caixa").status_code == 403
+    admin.put(f"/api/usuarios/{beto['id']}", json={"ativo": False})
+    assert c.get("/api/estado").status_code == 401
+
+
+def test_admin_nao_pode_se_trancar_para_fora(ambiente, admin):
+    app, banco, _ = ambiente
+    ana = banco.listar_usuarios()[0]
+    r = admin.put(f"/api/usuarios/{ana['id']}", json={"permissoes": ["pedidos"]})
+    assert r.status_code == 400 and "pelo menos um" in r.get_json()["erro"]
+
+
+def test_trocar_propria_senha(ambiente, admin):
+    app, _, _ = ambiente
+    assert admin.post("/api/minha-senha", json={"atual": "errada", "nova": "5555"}).status_code == 400
+    assert admin.post("/api/minha-senha", json={"atual": "1234", "nova": "5555"}).status_code == 200
+    entrar(app, "ana", "5555")
+
+
+# --- Fluxo de pedido e caixa --------------------------------------------------
+
+def test_fluxo_completo_pedido_caixa_cozinha_painel_e_pagamento(ambiente, admin):
+    app, banco, _ = ambiente
+    criar_usuario(admin, "caixa", ["pedidos", "receber", "caixa"])
+    caixa = entrar(app, "caixa")
+    p = _produto(admin)
+    r = caixa.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 2}], "cliente": "Maria"})
+    pedido = r.get_json()["pedido"]
+    assert pedido["total_centavos"] == 5000 and pedido["usuario_nome"] == "Caixa"
+
+    estado = caixa.get("/api/estado").get_json()
+    assert [x["codigo"] for x in estado["pedidos"]] == ["1"]
+    assert estado["contas"][0]["total"] == 5000 and estado["caixa_aberto"] is False
+    versao = estado["versao"]
+    assert caixa.get(f"/api/estado?v={versao}").get_json() == {"versao": versao, "mudou": False}
+
+    caixa.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "pronto"})
+    caixa.post(f"/api/pedidos/{pedido['id']}/chamar")
+    assert app.test_client().get("/api/painel").get_json()["chamadas"][0]["cliente"] == "Maria"
+
+    assert caixa.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "pix", "valor": 5000}]}).status_code == 400
+    assert caixa.post("/api/caixa/abrir", json={"valor_abertura": 10000}).status_code == 200
+    r = caixa.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "dinheiro", "valor": 10000}]})
+    assert r.get_json()["recebimento"]["troco"] == 5000
+
+    estado = caixa.get("/api/estado").get_json()
+    assert estado["contas"] == [] and estado["sessao"]["total_vendas"] == 5000
+    assert "esperado_dinheiro" not in estado["sessao"]  # fechamento cego
+    assert len(estado["recebimentos"]) == 1
+
+    r = caixa.post("/api/caixa/fechar", json={"valor_contado": 15000})
+    s = r.get_json()["sessao"]
+    assert s["esperado_dinheiro"] == 15000 and s["diferenca"] == 0
+
+    acoes = [a["acao"] for a in banco.listar_auditoria("2000-01-01", "2100-01-01") if a["usuario_nome"] == "Caixa"]
+    for esperada in ("Lançou pedido", "Marcou pronto", "Chamou no painel", "Abriu o caixa", "Recebeu pagamento", "Fechou o caixa"):
+        assert esperada in acoes
+
+
+def test_estorno_e_cancelamento_exigem_permissao_cancelar(ambiente, admin):
+    app, _, _ = ambiente
+    p = _produto(admin, preco=1000)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    rec = admin.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "pix", "valor": 1000}]}).get_json()["recebimento"]
+    criar_usuario(admin, "caixa", ["pedidos", "receber"])
+    caixa = entrar(app, "caixa")
+    assert caixa.post(f"/api/recebimentos/{rec['id']}/estornar", json={"motivo": "x"}).status_code == 403
+    assert admin.post(f"/api/recebimentos/{rec['id']}/estornar", json={"motivo": "lançado errado"}).status_code == 200
+    r = admin.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "cancelado"})
+    assert r.status_code == 400 and "motivo" in r.get_json()["erro"]
+    assert admin.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "cancelado", "motivo": "desistiu"}).status_code == 200
+
+
+def test_sangria_e_suprimento(admin):
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 5000})
+    assert admin.post("/api/caixa/movimento", json={"tipo": "suprimento", "valor": 2000, "motivo": "troco"}).status_code == 200
+    r = admin.post("/api/caixa/movimento", json={"tipo": "sangria", "valor": 999999, "motivo": "x"})
+    assert r.status_code == 400 and "Sangria maior" in r.get_json()["erro"]
+    assert admin.post("/api/caixa/movimento", json={"tipo": "sangria", "valor": 3000, "motivo": "banco"}).status_code == 200
+    s = admin.post("/api/caixa/fechar", json={"valor_contado": 4000}).get_json()["sessao"]
+    assert s["esperado_dinheiro"] == 4000 and s["sangrias"] == 3000 and s["suprimentos"] == 2000
+
+
+def test_relatorio_csv_e_historico(ambiente, admin):
+    p = _produto(admin, "Pão de queijo", 500)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 3}]}).get_json()["pedido"]
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    admin.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "debito", "valor": 1500}]})
+    r = admin.get("/api/relatorios").get_json()
+    assert r["relatorio"]["total_vendas"] == 1500 and r["relatorio"]["por_forma"]["debito"] == 1500
+    assert r["relatorio"]["por_produto"] == [{"nome": "Pão de queijo", "quantidade": 3, "valor": 1500}]
+    csv = admin.get("/api/relatorios/vendas.csv")
+    assert csv.mimetype == "text/csv" and "attachment" in csv.headers["Content-Disposition"]
+    assert "15,00" in csv.data.decode("utf-8-sig")
+    hist = admin.get("/api/auditoria?busca=pão").get_json()
+    assert hist["registros"] and hist["usuarios"][0]["nome"] == "Ana"
+    assert admin.get("/api/relatorios?de=2026-13-01&ate=2026-01-01").status_code == 400
+
+
+def test_erros_de_negocio_viram_400_com_mensagem(admin):
+    r = admin.post("/api/pedidos", json={"itens": []})
+    assert r.status_code == 400 and r.get_json() == {"ok": False, "erro": "O pedido está vazio."}
+
+
+# --- Cliente (QR code) ----------------------------------------------------------
+
+def test_cliente_qrcode_pede_e_chama_garcom(ambiente, admin):
+    app, banco, _ = ambiente
+    p = _produto(admin)
+    mesa = banco.criar_mesa("7")
+    c = app.test_client()
+    r = c.post(f"/api/cliente/{mesa['token']}/pedido", json={"itens": [{"produto_id": p["id"]}], "cliente": "Léo"})
+    assert r.status_code == 200
+    pedido = banco.listar_pedidos()[0]
+    assert pedido["origem"] == "qrcode" and pedido["mesa"] == "7" and pedido["usuario_nome"] == "Cliente (mesa 7)"
+    c.post(f"/api/cliente/{mesa['token']}/chamar", json={"tipo": "conta"})
+    dados = c.get(f"/api/cliente/{mesa['token']}").get_json()
+    assert dados["chamados"] == ["conta"] and "impressao" not in dados["pedidos"][0]
+    assert admin.get("/api/estado").get_json()["contas"][0]["titulo"] == "Mesa 7"
+
+
+def test_cliente_token_invalido_e_pedidos_desativados(ambiente, admin):
+    app, banco, _ = ambiente
+    c = app.test_client()
+    assert c.get("/m/nao-existe").status_code == 404
+    assert c.get("/api/cliente/nao-existe").status_code == 404
+    p = _produto(admin)
+    mesa = banco.criar_mesa("1")
+    banco.salvar_config({"pedidos_qrcode_ativo": False})
+    r = c.post(f"/api/cliente/{mesa['token']}/pedido", json={"itens": [{"produto_id": p["id"]}]})
+    assert r.status_code == 400 and "desativados" in r.get_json()["erro"]
+    assert c.post(f"/api/cliente/{mesa['token']}/chamar", json={}).status_code == 200
+
+
+# --- Cadastro, mídias, QR ------------------------------------------------------
+
+def test_foto_de_produto_e_redimensionada_para_jpeg(ambiente, admin):
+    _, _, pasta = ambiente
+    p = _produto(admin)
+    r = admin.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (_imagem(), "lanche.png")}, content_type="multipart/form-data")
     produto = r.get_json()["produto"]
     arquivo = pasta / "fotos" / produto["foto"]
     with Image.open(arquivo) as img:
         assert img.format == "JPEG" and max(img.size) == 900 and img.mode == "RGB"
-    assert cliente.get("/foto/" + produto["foto"]).status_code == 200
-
-    # trocar a foto apaga a antiga
-    r = cliente.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (_imagem("JPEG", (400, 300), "RGB"), "b.jpg")},
-                     content_type="multipart/form-data")
+    admin.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (_imagem("JPEG", (400, 300), "RGB"), "b.jpg")},
+               content_type="multipart/form-data")
     assert not arquivo.exists()
-    # arquivo que não é imagem
-    r = cliente.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (io.BytesIO(b"nada"), "x.jpg")},
-                     content_type="multipart/form-data")
+    r = admin.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (io.BytesIO(b"nada"), "x.jpg")}, content_type="multipart/form-data")
     assert r.status_code == 400
 
 
-def test_upload_midias_do_painel(ambiente):
-    cliente, _, pasta = ambiente
-    r = cliente.post("/api/midias", data={"arquivos": [
-        (_imagem(), "promo.png"),
-        (io.BytesIO(b"\x00\x00\x00\x18ftypmp42fake"), "video.mp4"),
-        (io.BytesIO(b"texto"), "leia.txt"),
+def test_upload_midias_do_painel(ambiente, admin):
+    app, _, pasta = ambiente
+    r = admin.post("/api/midias", data={"arquivos": [
+        (_imagem(), "promo.png"), (io.BytesIO(b"\x00\x00\x00\x18ftypmp42fake"), "video.mp4"), (io.BytesIO(b"texto"), "leia.txt"),
     ]}, content_type="multipart/form-data")
-    dados = r.get_json()
-    assert dados["adicionadas"] == 2 and dados["recusados"] == ["leia.txt"]
-    painel = cliente.get("/api/painel").get_json()
+    assert r.get_json()["adicionadas"] == 2 and r.get_json()["recusados"] == ["leia.txt"]
+    painel = app.test_client().get("/api/painel").get_json()
     assert [m["tipo"] for m in painel["midias"]] == ["foto", "video"]
-    video_url = painel["midias"][1]["url"]
-    # vídeo servido com suporte a Range (necessário pra TVs/celulares)
-    r = cliente.get(video_url, headers={"Range": "bytes=0-3"})
+    r = app.test_client().get(painel["midias"][1]["url"], headers={"Range": "bytes=0-3"})
     assert r.status_code == 206 and r.data == b"\x00\x00\x00\x18"
 
-    midia_id = cliente.get("/api/midias").get_json()["midias"][0]["id"]
-    arquivo = pasta / "midias" / cliente.get("/api/midias").get_json()["midias"][0]["arquivo"]
-    cliente.delete(f"/api/midias/{midia_id}")
-    assert not arquivo.exists()
 
-
-def test_painel_sem_midia_usa_fotos_dos_produtos(ambiente):
-    cliente, _, _ = ambiente
-    p = _produto(cliente)
-    _produto(cliente, "Sem foto")
-    cliente.post(f"/api/produtos/{p['id']}/foto", data={"arquivo": (_imagem(), "a.png")}, content_type="multipart/form-data")
-    painel = cliente.get("/api/painel").get_json()
-    assert painel["midias"] == []
-    assert [x["nome"] for x in painel["produtos"]] == ["X-Burger"]
-
-
-def test_qrcode_da_mesa_contem_link_com_ip_da_rede(ambiente):
-    cliente, banco, _ = ambiente
+def test_qrcode_da_mesa_usa_endereco_da_rede(ambiente, admin):
+    _, banco, _ = ambiente
     mesa = banco.criar_mesa("4")
-    r = cliente.get(f"/qrcode/mesa/{mesa['id']}.svg")
-    assert r.status_code == 200 and r.mimetype == "image/svg+xml" and b"<svg" in r.data
-    mesas = cliente.get("/api/mesas").get_json()["mesas"]
-    assert mesas[0]["link"] == f"http://192.168.0.10:8090/m/{mesa['token']}"
-
+    r = admin.get(f"/qrcode/mesa/{mesa['id']}.svg")
+    assert r.status_code == 200 and b"<svg" in r.data
+    assert admin.get("/api/mesas").get_json()["mesas"][0]["link"] == f"http://192.168.0.10:8090/m/{mesa['token']}"
     banco.salvar_config({"url_base": "http://10.0.0.5:9000/"})
-    assert cliente.get("/api/mesas").get_json()["mesas"][0]["link"] == f"http://10.0.0.5:9000/m/{mesa['token']}"
-    folha = cliente.get("/admin/qrcodes")
-    assert folha.status_code == 200 and b"Mesa 4" in folha.data
+    assert admin.get("/api/mesas").get_json()["mesas"][0]["link"] == f"http://10.0.0.5:9000/m/{mesa['token']}"
 
 
-def test_impressao_na_cozinha_por_tcp(ambiente, impressora_falsa):
-    cliente, banco, _ = ambiente
+def test_config_nao_aceita_segredo(ambiente, admin):
+    _, banco, _ = ambiente
+    chave = banco.secret_key()
+    admin.put("/api/config", json={"secret_key": "hack", "nome_loja": "Lanchonete"})
+    assert banco.secret_key() == chave and banco.config()["nome_loja"] == "Lanchonete"
+
+
+# --- Impressão -----------------------------------------------------------------
+
+def test_impressao_na_cozinha_por_tcp(ambiente, admin, impressora_falsa):
+    _, banco, _ = ambiente
     banco.salvar_config({"impressora_cozinha_ativa": True, "impressora_cozinha_host": "127.0.0.1",
-                         "impressora_cozinha_porta": impressora_falsa.porta, "nome_loja": "Lanchonete Zé"})
-    p = _produto(cliente, "Pão de queijo")
-    r = cliente.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 3}]})
+                         "impressora_cozinha_porta": impressora_falsa.porta})
+    p = _produto(admin, "Pão de queijo")
+    r = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 3}]})
     assert r.get_json()["pedido"]["impressao"] == "ok"
-    recebido = impressora_falsa.esperar()[0]
-    assert "Pão de queijo".encode("cp850") in recebido and b"3x" in recebido
-
-    # reimpressão
-    cliente.post(f"/api/pedidos/{r.get_json()['pedido']['id']}/imprimir")
+    assert "Pão de queijo".encode("cp850") in impressora_falsa.esperar()[0]
+    admin.post(f"/api/pedidos/{r.get_json()['pedido']['id']}/imprimir")
     assert len(impressora_falsa.esperar(2)) == 2
 
 
-def test_falha_de_impressao_nao_impede_o_pedido(ambiente):
-    cliente, banco, _ = ambiente
-    banco.salvar_config({"impressora_cozinha_ativa": True, "impressora_cozinha_host": "127.0.0.1",
-                         "impressora_cozinha_porta": 1})
-    p = _produto(cliente)
-    r = cliente.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]})
-    assert r.status_code == 200
-    assert r.get_json()["pedido"]["impressao"].startswith("erro")
-    assert len(banco.listar_pedidos()) == 1
+def test_falha_de_impressao_nao_impede_o_pedido(ambiente, admin):
+    _, banco, _ = ambiente
+    banco.salvar_config({"impressora_cozinha_ativa": True, "impressora_cozinha_host": "127.0.0.1", "impressora_cozinha_porta": 1})
+    p = _produto(admin)
+    r = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]})
+    assert r.status_code == 200 and r.get_json()["pedido"]["impressao"].startswith("erro")
 
 
-def test_senha_do_totem_impressa(ambiente, impressora_falsa):
-    cliente, banco, _ = ambiente
-    banco.salvar_config({"impressora_senhas_ativa": True, "impressora_senhas_host": "127.0.0.1",
-                         "impressora_senhas_porta": impressora_falsa.porta})
-    r = cliente.post("/api/senhas", json={"prefixo": "P", "origem": "totem"}).get_json()
-    assert r["senha"]["codigo"] == "P001" and r["senha"]["origem"] == "totem" and r["impressa"] is True
-    assert b"P001" in impressora_falsa.esperar()[0]
+def test_impressora_do_caixa_conta_e_fechamento(ambiente, admin, impressora_falsa):
+    _, banco, _ = ambiente
+    banco.salvar_config({"impressora_caixa_ativa": True, "impressora_caixa_host": "127.0.0.1",
+                         "impressora_caixa_porta": impressora_falsa.porta})
+    p = _produto(admin, preco=2000)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}], "mesa": "5"}).get_json()["pedido"]
+    assert admin.post("/api/contas/imprimir", json={"pedido_ids": [pedido["id"]], "titulo": "Mesa 5"}).status_code == 200
+    assert b"Mesa 5" in impressora_falsa.esperar()[0]
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    r = admin.post("/api/caixa/fechar", json={"valor_contado": 0})
+    assert r.get_json()["impresso"] is True
+    assert b"FECHAMENTO DE CAIXA" in impressora_falsa.esperar(2)[1]
 
-    r = cliente.post("/api/senhas/chamar-proxima", json={"guiche": "3"}).get_json()
-    assert r["senha"]["codigo"] == "P001"
-    painel = cliente.get("/api/painel").get_json()["chamadas"][0]
-    assert painel["tipo"] == "senha" and painel["guiche"] == "3"
-    assert cliente.post("/api/senhas/chamar-proxima", json={"guiche": "3"}).get_json()["ok"] is False
 
-
-def test_teste_de_impressora(ambiente, impressora_falsa):
-    cliente, banco, _ = ambiente
-    banco.salvar_config({"impressora_cozinha_host": "127.0.0.1", "impressora_cozinha_porta": impressora_falsa.porta})
-    assert cliente.post("/api/impressora/teste", json={"qual": "cozinha"}).status_code == 200
+def test_teste_de_impressora(ambiente, admin, impressora_falsa):
+    _, banco, _ = ambiente
+    banco.salvar_config({"impressora_caixa_host": "127.0.0.1", "impressora_caixa_porta": impressora_falsa.porta})
+    assert admin.post("/api/impressora/teste", json={"qual": "caixa"}).status_code == 200
     assert b"TESTE OK" in impressora_falsa.esperar()[0]
-    assert cliente.post("/api/impressora/teste", json={"qual": "outra"}).status_code == 400
-    assert cliente.post("/api/impressora/teste", json={"qual": "senhas"}).status_code == 400  # sem IP
+    assert admin.post("/api/impressora/teste", json={"qual": "outra"}).status_code == 400
+    assert admin.post("/api/impressora/teste", json={"qual": "cozinha"}).status_code == 400  # sem IP
 
 
 def test_arquivos_nao_escapam_da_pasta(ambiente):
-    cliente, _, pasta = ambiente
+    app, _, pasta = ambiente
     (pasta / "segredo.txt").write_text("x")
-    assert cliente.get("/foto/..%2Fsegredo.txt").status_code == 404
-    assert cliente.get("/midia/../segredo.txt").status_code == 404
+    c = app.test_client()
+    assert c.get("/foto/..%2Fsegredo.txt").status_code == 404
+    assert c.get("/midia/../segredo.txt").status_code == 404

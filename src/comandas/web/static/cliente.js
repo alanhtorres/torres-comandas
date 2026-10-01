@@ -85,7 +85,7 @@
             if (obs !== null) { item.observacao = obs.trim(); renderCarrinho(); }
           } }, item.observacao ? "editar observação" : "+ observação")),
         el("strong", {}, moeda(p.preco_centavos * item.quantidade)));
-    }));
+    }).filter(Boolean));
   }
 
   function renderPedidos(pedidos) {

@@ -9,8 +9,8 @@ PEDIDO = {
     "id": 1, "codigo": "42", "origem": "qrcode", "mesa": "7", "cliente": "Conceição",
     "criado_em": 1_790_000_000.0, "observacao": "Cliente alérgico a amendoim",
     "itens": [
-        {"nome": "X-Salada Especial da Casa com Bacon", "quantidade": 2, "observacao": "sem cebola"},
-        {"nome": "Suco de maçã", "quantidade": 1, "observacao": ""},
+        {"nome": "X-Salada Especial da Casa com Bacon", "quantidade": 2, "observacao": "sem cebola", "preco_centavos": 3000},
+        {"nome": "Suco de maçã", "quantidade": 1, "observacao": "", "preco_centavos": 900},
     ],
 }
 
@@ -57,7 +57,24 @@ def test_envio_falha_com_mensagem_clara():
         impressora.enviar("", 9100, b"x")
 
 
-def test_cupom_senha():
-    dados = impressora.cupom_senha({"codigo": "P007", "criado_em": 1_790_000_000.0}, "Lotérica", "Preferencial")
-    assert b"P007" in dados and b"PREFERENCIAL" in dados
-    assert impressora.TAMANHO_GIGANTE in dados
+def test_cupom_conta_com_taxa_de_servico():
+    dados = impressora.cupom_conta("Mesa 7", [PEDIDO], "Bar", taxa_servico_percentual=10)
+    assert b"CONFERENCIA DE CONTA" in dados and b"Mesa 7" in dados
+    assert b"R$ 69,00" in dados and b"R$ 6,90" in dados and b"R$ 75,90" in dados
+    assert b"Nao e documento fiscal" in dados
+
+
+def test_cupom_fechamento_mostra_diferenca():
+    resumo = {
+        "aberto_em": 1_790_000_000.0, "aberto_por_nome": "Ana", "fechado_em": 1_790_030_000.0, "fechado_por_nome": "Ana",
+        "qtd_vendas": 3, "total_vendas": 12000, "por_forma": {"dinheiro": 5000, "pix": 7000}, "descontos": 0,
+        "qtd_estornos": 0, "total_estornos": 0, "valor_abertura": 10000, "suprimentos": 0, "sangrias": 2000,
+        "esperado_dinheiro": 13000, "valor_contado": 12500, "diferenca": -500,
+        "movimentos": [{"tipo": "sangria", "motivo": "depósito", "valor": 2000}], "observacao": "",
+    }
+    dados = impressora.cupom_fechamento(resumo, "Bar", {"dinheiro": "Dinheiro", "pix": "Pix"}, colunas=32)
+    assert b"FECHAMENTO DE CAIXA" in dados and b"FALTA" in dados and b"R$ 5,00" in dados
+    assert b"R$ 130,00" in dados and "depósito".encode("cp850") in dados
+    for linha in dados.split(b"\n"):
+        limpa = linha.replace(impressora.NEGRITO_ON, b"").replace(impressora.NEGRITO_OFF, b"")
+        assert len(limpa) <= 40  # cabe na bobina (com folga para comandos)

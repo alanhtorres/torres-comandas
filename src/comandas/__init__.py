@@ -1,2 +1,2 @@
-"""Torres Comandas — pedidos, senhas e painel de chamada para o comércio."""
-__version__ = "1.0.0"
+"""Torres Comandas — pedidos, controle de caixa e painel de chamada para o comércio."""
+__version__ = "2.0.0"

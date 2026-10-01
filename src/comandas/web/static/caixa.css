@@ -54,18 +54,7 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 .acoes-carrinho { display: flex; gap: 10px; justify-content: flex-end; }
 .acoes-carrinho .primario { flex: 1; }
 
-.senhas .fila { display: flex; gap: 10px; margin-bottom: 10px; }
-.senhas .fila div { flex: 1; background: var(--fundo); border-radius: 8px; padding: 8px; text-align: center; }
-.senhas .fila strong { display: block; font-size: 1.6rem; }
 .rotulo { color: var(--texto-2); font-size: 0.8rem; }
-.linha-botoes { display: flex; gap: 8px; margin-bottom: 8px; }
-.linha-botoes button { flex: 1; }
-.senha-chamada {
-  display: flex; align-items: center; gap: 8px;
-  background: var(--fundo); border-radius: 8px; padding: 6px 10px; margin-top: 6px;
-}
-.senha-chamada strong { font-size: 1.2rem; }
-.senha-chamada .espaco { flex: 1; }
 
 .titulo-secao { font-size: 0.95rem; margin: 6px 0 -4px; color: var(--texto-2); display: flex; gap: 8px; align-items: center; }
 
@@ -99,3 +88,45 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 }
 .alerta-garcom button { background: #ffedd5; color: #7c2d12; padding: 6px 10px; }
 @keyframes pulsar { 50% { box-shadow: 0 0 0 6px rgba(251, 146, 60, 0.25); } }
+
+.colunas.sem-pedido { grid-template-columns: minmax(0, 1fr); max-width: 900px; margin: 0 auto; }
+
+.barra-caixa {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 16px; background: #0b1220; border-bottom: 1px solid var(--borda);
+}
+.barra-caixa .espaco { flex: 1; }
+.barra-caixa .aberto { color: #86efac; font-weight: 600; }
+.barra-caixa .fechado { color: #fca5a5; font-weight: 600; }
+.barra-caixa button { padding: 8px 14px; }
+
+.abas-caixa { display: flex; gap: 6px; border-bottom: 1px solid var(--borda); }
+.abas-caixa button { background: transparent; border-radius: 8px 8px 0 0; color: var(--texto-2); border-bottom: 3px solid transparent; }
+.abas-caixa button.ativa { color: var(--texto); border-bottom-color: var(--destaque); background: var(--painel); }
+.aba-caixa { display: flex; flex-direction: column; gap: 8px; }
+
+.etiqueta.pago { background: #14532d; color: #bbf7d0; }
+.etiqueta.a-receber { background: #713f12; color: #fde68a; }
+
+.conta { background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 12px; }
+.conta .cabeca { display: flex; align-items: center; gap: 8px; }
+.conta .cabeca h3 { margin: 0; font-size: 1.1rem; }
+.conta .cabeca .espaco { flex: 1; }
+.conta .cabeca strong { font-size: 1.2rem; }
+.conta ul { margin: 6px 0 8px; padding-left: 18px; color: var(--texto-2); font-size: 0.9rem; }
+.conta .acoes { display: flex; gap: 6px; justify-content: flex-end; }
+
+.recebimento { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center;
+  background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 10px 12px; }
+.recebimento .formas { color: var(--texto-2); font-size: 0.85rem; }
+.recebimento.estornado { opacity: 0.55; }
+.recebimento.estornado strong { text-decoration: line-through; }
+
+.pagamento-resumo { background: var(--fundo); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.pagamento-resumo ul { margin: 0 0 6px; padding-left: 18px; color: var(--texto-2); font-size: 0.9rem; max-height: 140px; overflow-y: auto; }
+.grade-formas { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-top: 8px; }
+.forma { display: flex; flex-direction: column; gap: 4px; background: var(--fundo); border-radius: 8px; padding: 8px; }
+.forma span { font-size: 0.85rem; color: var(--texto-2); display: flex; justify-content: space-between; align-items: center; }
+.forma span button { padding: 2px 8px; font-size: 0.75rem; }
+.forma input { font-size: 1.1rem; }
+.saldo-pagamento { display: flex; justify-content: space-between; font-size: 1.15rem; font-weight: 700; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--fundo); }

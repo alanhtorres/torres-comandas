@@ -1,48 +1,66 @@
 (function () {
   "use strict";
-  const { api, moeda, el, minutosDesde, aviso, bip } = window.C;
+  const { api, moeda, el, minutosDesde, hora, aviso, bip, centavos, reais, campoDinheiro, dialogo } = window.C;
   const $ = (id) => document.getElementById(id);
+  const pode = {
+    pedidos: document.body.dataset.podePedidos === "1",
+    receber: document.body.dataset.podeReceber === "1",
+    caixa: document.body.dataset.podeCaixa === "1",
+    cancelar: document.body.dataset.podeCancelar === "1",
+  };
 
+  let estado = { pedidos: [], contas: [], recebimentos: [], formas: {}, chamados_garcom: [] };
   let produtos = [];
   let categoriaAtiva = null;
   let carrinho = []; // {produto, quantidade, observacao}
   let prontosVistos = null;
   let chamadosVistos = null;
 
-  // O guichê fica gravado neste aparelho (cada caixa tem o seu).
-  try { $("guiche").value = localStorage.getItem("guiche") || ""; } catch (e) { /* sem storage */ }
-  $("guiche").addEventListener("change", () => {
-    try { localStorage.setItem("guiche", $("guiche").value.trim()); } catch (e) { /* sem storage */ }
-  });
+  async function acao(metodo, url, corpo, msgOk) {
+    try {
+      const r = await api(metodo, url, corpo || {});
+      if (msgOk) aviso(msgOk, "ok");
+      monitor.forcar();
+      return r;
+    } catch (err) {
+      aviso(err.message, "erro");
+      return null;
+    }
+  }
+
+  // --- Abas -------------------------------------------------------------------
+
+  document.querySelectorAll(".abas-caixa button").forEach((b) => b.addEventListener("click", () => abrirAba(b.dataset.aba)));
+  function abrirAba(nome) {
+    document.querySelectorAll(".abas-caixa button").forEach((b) => b.classList.toggle("ativa", b.dataset.aba === nome));
+    document.querySelectorAll(".aba-caixa").forEach((a) => (a.hidden = a.id !== "aba-" + nome));
+  }
+  abrirAba(pode.pedidos ? "pedidos" : "contas");
 
   // --- Montagem do pedido ------------------------------------------------
 
   function renderCategorias() {
     const cats = [...new Set(produtos.map((p) => p.categoria))];
     if (categoriaAtiva && !cats.includes(categoriaAtiva)) categoriaAtiva = null;
-    $("categorias").replaceChildren(
-      el("button", { class: categoriaAtiva === null ? "ativo" : "", onclick: () => { categoriaAtiva = null; renderCategorias(); renderProdutos(); } }, "Todos"),
-      ...cats.map((c) => el("button", {
-        class: categoriaAtiva === c ? "ativo" : "",
-        onclick: () => { categoriaAtiva = c; renderCategorias(); renderProdutos(); },
-      }, c))
-    );
+    const chip = (rotulo, valor) => el("button", {
+      class: categoriaAtiva === valor ? "ativo" : "",
+      onclick: () => { categoriaAtiva = valor; renderCategorias(); renderProdutos(); },
+    }, rotulo);
+    $("categorias").replaceChildren(chip("Todos", null), ...cats.map((c) => chip(c, c)));
   }
 
   function renderProdutos() {
     const busca = $("busca").value.trim().toLowerCase();
-    const lista = produtos.filter((p) =>
-      (categoriaAtiva === null || p.categoria === categoriaAtiva) &&
-      (!busca || p.nome.toLowerCase().includes(busca)));
     if (!produtos.length) {
       $("produtos").replaceChildren(el("div", { class: "vazio" }, "Nenhum produto cadastrado. ", el("a", { href: "/admin" }, "Cadastrar cardápio")));
       return;
     }
+    const lista = produtos.filter((p) =>
+      (categoriaAtiva === null || p.categoria === categoriaAtiva) && (!busca || p.nome.toLowerCase().includes(busca)));
     $("produtos").replaceChildren(...lista.map((p) =>
       el("button", { class: "produto-btn", onclick: () => adicionar(p) },
         p.foto ? el("img", { src: "/foto/" + p.foto, alt: "", loading: "lazy" }) : null,
-        el("span", { class: "info" }, el("span", { class: "nome" }, p.nome), el("span", { class: "preco" }, moeda(p.preco_centavos))))
-    ));
+        el("span", { class: "info" }, el("span", { class: "nome" }, p.nome), el("span", { class: "preco" }, moeda(p.preco_centavos))))));
   }
 
   function adicionar(produto) {
@@ -57,6 +75,7 @@
     $("total").textContent = moeda(total);
     $("qtd-itens").textContent = carrinho.reduce((s, i) => s + i.quantidade, 0);
     $("enviar").disabled = !carrinho.length;
+    if ($("enviar-receber")) $("enviar-receber").disabled = !carrinho.length || !estado.caixa_aberto;
     if (!carrinho.length) {
       $("itens-carrinho").replaceChildren(el("div", { class: "vazio" }, "Toque nos produtos acima para adicionar."));
       return;
@@ -72,18 +91,16 @@
           const obs = prompt("Observação para " + item.produto.nome + " (ex.: sem cebola):", item.observacao);
           if (obs !== null) { item.observacao = obs.trim(); renderCarrinho(); }
         } }, "✏️"),
-        el("span", {}, moeda(item.produto.preco_centavos * item.quantidade)))
-    ));
+        el("span", {}, moeda(item.produto.preco_centavos * item.quantidade)))));
   }
 
-  $("busca").addEventListener("input", renderProdutos);
-  $("limpar").addEventListener("click", () => {
+  function limparCarrinho() {
     carrinho = [];
     $("cliente").value = $("mesa").value = $("obs").value = "";
     renderCarrinho();
-  });
+  }
 
-  $("enviar").addEventListener("click", async () => {
+  async function enviarPedido(receberDepois) {
     $("enviar").disabled = true;
     try {
       const r = await api("POST", "/api/pedidos", {
@@ -91,63 +108,72 @@
         cliente: $("cliente").value, mesa: $("mesa").value, observacao: $("obs").value,
       });
       aviso("Pedido nº " + r.pedido.codigo + " enviado para a cozinha", "ok");
-      carrinho = [];
-      $("cliente").value = $("mesa").value = $("obs").value = "";
+      limparCarrinho();
+      monitor.forcar();
+      if (receberDepois) dialogoPagamento([r.pedido], "Pedido nº " + r.pedido.codigo);
+    } catch (err) {
+      aviso(err.message, "erro");
       renderCarrinho();
-      monitor.forcar();
-    } catch (err) {
-      aviso(err.message, "erro");
-      $("enviar").disabled = false;
-    }
-  });
-
-  // --- Ações sobre pedidos -------------------------------------------------
-
-  async function acao(url, corpo, msgOk) {
-    try {
-      await api("POST", url, corpo || {});
-      if (msgOk) aviso(msgOk, "ok");
-      monitor.forcar();
-    } catch (err) {
-      aviso(err.message, "erro");
     }
   }
 
-  function descricaoOrigem(p) {
-    const partes = [];
-    if (p.origem === "qrcode") partes.push(el("span", { class: "etiqueta qrcode" }, "QR code"));
-    if (p.mesa) partes.push("Mesa " + p.mesa);
-    if (p.cliente) partes.push(p.cliente);
-    return partes;
+  if (pode.pedidos) {
+    $("busca").addEventListener("input", renderProdutos);
+    $("limpar").addEventListener("click", limparCarrinho);
+    $("enviar").addEventListener("click", () => enviarPedido(false));
+    if ($("enviar-receber")) $("enviar-receber").addEventListener("click", () => enviarPedido(true));
+    renderCarrinho();
+  }
+
+  // --- Lista de pedidos --------------------------------------------------
+
+  function dialogoCancelar(p) {
+    const motivo = el("input", { maxlength: 200, required: true, placeholder: "Ex.: cliente desistiu, lançado errado" });
+    dialogo({
+      titulo: "Cancelar o pedido nº " + p.codigo + "?",
+      corpo: el("div", {}, el("p", {}, p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)),
+        el("label", {}, "Motivo do cancelamento (fica registrado)"), motivo),
+      confirmar: "Cancelar pedido", cancelar: "Voltar", perigo: true,
+      aoConfirmar: async () => {
+        await api("POST", `/api/pedidos/${p.id}/status`, { status: "cancelado", motivo: motivo.value });
+        aviso("Pedido cancelado", "ok");
+        monitor.forcar();
+      },
+    });
   }
 
   function cartaoPedido(p) {
     const botoes = [];
-    if (p.status === "pronto") {
-      botoes.push(el("button", { class: "verde", onclick: () => acao(`/api/pedidos/${p.id}/chamar`, {}, `Pedido ${p.codigo} chamado no painel`) }, "📢 Chamar no painel"));
-    } else if (p.status === "chamado") {
-      botoes.push(el("button", { onclick: () => acao(`/api/pedidos/${p.id}/chamar`, {}, "Chamado de novo") }, "🔁 Chamar de novo"));
-      botoes.push(el("button", { class: "verde", onclick: () => acao(`/api/pedidos/${p.id}/status`, { status: "entregue" }) }, "✓ Entregue"));
-    } else {
-      botoes.push(el("button", { onclick: () => acao(`/api/pedidos/${p.id}/status`, { status: "pronto" }) }, "Marcar pronto"));
-      botoes.push(el("button", { onclick: () => acao(`/api/pedidos/${p.id}/chamar`, {}, `Pedido ${p.codigo} chamado no painel`) }, "📢 Chamar"));
+    const chamar = (rotulo, classe) => el("button", { class: classe || "", onclick: () => acao("POST", `/api/pedidos/${p.id}/chamar`, {}, `Pedido ${p.codigo} chamado no painel`) }, rotulo);
+    if (pode.pedidos) {
+      if (p.status === "pronto") {
+        botoes.push(chamar("📢 Chamar no painel", "verde"));
+      } else if (p.status === "chamado") {
+        botoes.push(chamar("🔁 Chamar de novo"));
+        botoes.push(el("button", { class: "verde", onclick: () => acao("POST", `/api/pedidos/${p.id}/status`, { status: "entregue" }) }, "✓ Entregue"));
+      } else {
+        botoes.push(el("button", { onclick: () => acao("POST", `/api/pedidos/${p.id}/status`, { status: "pronto" }) }, "Marcar pronto"));
+        botoes.push(chamar("📢 Chamar"));
+      }
+      if (estado.impressora_cozinha_ativa) {
+        botoes.push(el("button", { class: "discreto", title: "Reimprimir na cozinha", onclick: () => acao("POST", `/api/pedidos/${p.id}/imprimir`, {}, "Enviado para a impressora") }, "🖨️"));
+      }
     }
-    if (estado.impressora_cozinha_ativa) {
-      botoes.push(el("button", { class: "discreto", title: "Reimprimir na cozinha", onclick: () => acao(`/api/pedidos/${p.id}/imprimir`, {}, "Enviado para a impressora") }, "🖨️"));
+    if (pode.receber && !p.pago) {
+      botoes.push(el("button", { class: "discreto", title: "Receber este pedido", onclick: () => dialogoPagamento([p], "Pedido nº " + p.codigo) }, "💲"));
     }
-    botoes.push(el("button", { class: "discreto", title: "Cancelar pedido", onclick: () => {
-      if (confirm("Cancelar o pedido nº " + p.codigo + "?")) acao(`/api/pedidos/${p.id}/status`, { status: "cancelado" }, "Pedido cancelado");
-    } }, "✕"));
-
-    const impressao = p.impressao && p.impressao.startsWith("erro")
-      ? el("span", { class: "etiqueta erro", title: p.impressao }, "falha na impressão") : null;
-
+    if (pode.cancelar && !p.pago) {
+      botoes.push(el("button", { class: "discreto", title: "Cancelar pedido", onclick: () => dialogoCancelar(p) }, "✕"));
+    }
+    const quem = [p.origem === "qrcode" ? el("span", { class: "etiqueta qrcode" }, "QR code") : null,
+      p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean);
     return el("div", { class: "pedido " + p.status },
       el("div", { class: "cabeca" },
         el("span", { class: "numero" }, "#" + p.codigo),
         el("span", { class: "etiqueta " + p.status }, window.C.STATUS_NOME[p.status]),
-        impressao,
-        el("span", { class: "quem" }, ...descricaoOrigem(p).flatMap((x, i) => (i ? [" · ", x] : [x]))),
+        el("span", { class: "etiqueta " + (p.pago ? "pago" : "a-receber") }, p.pago ? "pago" : "a receber"),
+        p.impressao && p.impressao.startsWith("erro") ? el("span", { class: "etiqueta erro", title: p.impressao }, "falha na impressão") : null,
+        el("span", { class: "quem" }, ...quem.flatMap((x, i) => (i ? [" · ", x] : [x]))),
         el("span", { class: "espaco" }),
         el("span", { class: "quem" }, minutosDesde(p.criado_em) + " min"),
         el("strong", {}, moeda(p.total_centavos))),
@@ -161,81 +187,281 @@
     $(id).replaceChildren(...(pedidos.length ? pedidos.map(cartaoPedido) : [el("div", { class: "vazio" }, textoVazio)]));
   }
 
-  // --- Senhas ---------------------------------------------------------------
+  // --- Contas a receber e pagamento ---------------------------------------
 
-  async function emitir(prefixo) {
-    try {
-      const r = await api("POST", "/api/senhas", { prefixo });
-      aviso("Senha " + r.senha.codigo + " emitida", "ok");
-      monitor.forcar();
-    } catch (err) {
-      aviso(err.message, "erro");
+  function renderContas() {
+    $("n-contas").textContent = estado.contas.length;
+    if (!estado.contas.length) {
+      $("aba-contas").replaceChildren(el("div", { class: "vazio" }, "Nenhuma conta em aberto. 🎉"));
+      return;
+    }
+    $("aba-contas").replaceChildren(...estado.contas.map((c) => el("div", { class: "conta" },
+      el("div", { class: "cabeca" }, el("h3", {}, c.titulo), el("span", { class: "espaco" }), el("strong", {}, moeda(c.total))),
+      el("ul", {}, c.pedidos.map((p) => el("li", {},
+        `Pedido ${p.codigo} (${hora(p.criado_em)}): ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))),
+      el("div", { class: "acoes" },
+        estado.impressora_caixa_ativa ? el("button", { onclick: () => acao("POST", "/api/contas/imprimir", { pedido_ids: c.pedidos.map((p) => p.id), titulo: c.titulo }, "Conta enviada para a impressora") }, "🖨️ Imprimir conta") : null,
+        pode.receber ? el("button", { class: "verde", disabled: !estado.caixa_aberto, title: estado.caixa_aberto ? "" : "Abra o caixa para receber",
+          onclick: () => dialogoPagamento(c.pedidos, c.titulo) }, "💲 Receber") : null))));
+  }
+
+  function dialogoPagamento(pedidos, titulo) {
+    if (!estado.caixa_aberto) {
+      aviso("O caixa está fechado. Abra o caixa para receber.", "erro");
+      return;
+    }
+    const subtotal = pedidos.reduce((s, p) => s + p.total_centavos, 0);
+    const desconto = campoDinheiro();
+    const acrescimo = campoDinheiro();
+    const taxa = estado.taxa_servico_percentual || 0;
+    const campos = {};
+    const saldo = el("div", { class: "saldo-pagamento" });
+    const totalEl = el("strong", {});
+
+    function total() {
+      return subtotal - (centavos(desconto.value) || 0) + (centavos(acrescimo.value) || 0);
+    }
+    function recebido() {
+      return Object.values(campos).reduce((s, c) => s + (centavos(c.value) || 0), 0);
+    }
+    function atualizar() {
+      totalEl.textContent = moeda(total());
+      const dif = recebido() - total();
+      saldo.replaceChildren(
+        el("span", {}, dif < 0 ? "Falta receber" : dif > 0 ? "Troco" : "Tudo certo"),
+        el("span", { class: dif < 0 ? "negativo" : "positivo" }, moeda(Math.abs(dif))));
+    }
+
+    const grade = el("div", { class: "grade-formas" }, Object.entries(estado.formas).map(([forma, nome]) => {
+      campos[forma] = campoDinheiro({ oninput: atualizar });
+      return el("label", { class: "forma" },
+        el("span", {}, nome, el("button", { type: "button", title: "Preencher com o que falta", onclick: () => {
+          campos[forma].value = "";
+          const falta = total() - recebido();
+          if (falta > 0) campos[forma].value = reais(falta);
+          atualizar();
+        } }, "restante")),
+        campos[forma]);
+    }));
+    desconto.addEventListener("input", atualizar);
+    acrescimo.addEventListener("input", atualizar);
+
+    const corpo = el("div", {},
+      el("div", { class: "pagamento-resumo" },
+        el("ul", {}, pedidos.map((p) => el("li", {}, `Pedido ${p.codigo}: ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))),
+        el("div", { class: "linha-valor" }, el("span", {}, "Subtotal"), el("span", {}, moeda(subtotal)))),
+      el("div", { class: "campos-duplos" },
+        el("div", {}, el("label", {}, "Desconto (R$)"), desconto),
+        el("div", {}, el("label", {}, "Acréscimo / taxa de serviço (R$)",
+          taxa ? el("button", { type: "button", class: "discreto", onclick: () => { acrescimo.value = reais(Math.round(subtotal * taxa / 100)); atualizar(); } }, `+${taxa}%`) : null), acrescimo)),
+      el("div", { class: "linha-valor destaque" }, el("span", {}, "Total a pagar"), totalEl),
+      el("label", {}, "Como o cliente vai pagar? (pode dividir entre várias formas; em dinheiro, digite o valor entregue para calcular o troco)"),
+      grade,
+      saldo);
+    atualizar();
+    dialogo({
+      titulo: "Receber — " + titulo,
+      corpo, largo: true, confirmar: "Confirmar pagamento",
+      aoConfirmar: async () => {
+        for (const c of [desconto, acrescimo, ...Object.values(campos)]) {
+          if (Number.isNaN(centavos(c.value))) throw new Error("Há um valor inválido. Use por exemplo 12,50");
+        }
+        const r = await api("POST", "/api/recebimentos", {
+          pedido_ids: pedidos.map((p) => p.id),
+          desconto: centavos(desconto.value), acrescimo: centavos(acrescimo.value),
+          formas: Object.entries(campos).map(([forma, c]) => ({ forma, valor: centavos(c.value) })).filter((f) => f.valor > 0),
+        });
+        aviso("Pagamento de " + moeda(r.recebimento.total) + " registrado" + (r.recebimento.troco ? " — troco " + moeda(r.recebimento.troco) : ""), "ok");
+        monitor.forcar();
+      },
+    });
+  }
+
+  function renderRecebidos() {
+    if (!$("aba-recebidos")) return;
+    const lista = estado.recebimentos || [];
+    $("n-recebidos").textContent = lista.filter((r) => !r.estornado_em).length;
+    if (!estado.caixa_aberto) {
+      $("aba-recebidos").replaceChildren(el("div", { class: "vazio" }, "O caixa está fechado."));
+      return;
+    }
+    if (!lista.length) {
+      $("aba-recebidos").replaceChildren(el("div", { class: "vazio" }, "Nenhum pagamento recebido neste caixa ainda."));
+      return;
+    }
+    $("aba-recebidos").replaceChildren(...lista.map((r) => el("div", { class: "recebimento" + (r.estornado_em ? " estornado" : "") },
+      el("span", {}, hora(r.criado_em)),
+      el("div", {}, r.descricao, el("div", { class: "formas" },
+        r.formas.map((f) => estado.formas[f.forma] + " " + moeda(f.valor)).join(" + ")
+        + (r.troco ? ` (troco ${moeda(r.troco)})` : "") + ` · ${r.usuario_nome}`
+        + (r.estornado_em ? ` · ESTORNADO por ${r.estornado_por_nome}: ${r.motivo_estorno}` : ""))),
+      el("strong", {}, moeda(r.total)),
+      pode.cancelar && !r.estornado_em ? el("button", { class: "discreto", onclick: () => dialogoEstorno(r) }, "Estornar") : el("span", {}))));
+  }
+
+  function dialogoEstorno(r) {
+    const motivo = el("input", { maxlength: 200, required: true, placeholder: "Ex.: forma de pagamento lançada errada" });
+    dialogo({
+      titulo: "Estornar pagamento de " + moeda(r.total) + "?",
+      corpo: el("div", {}, el("p", {}, r.descricao + ". Os pedidos voltam para \"A receber\"."), el("label", {}, "Motivo (fica registrado)"), motivo),
+      confirmar: "Estornar", cancelar: "Voltar", perigo: true,
+      aoConfirmar: async () => {
+        await api("POST", `/api/recebimentos/${r.id}/estornar`, { motivo: motivo.value });
+        aviso("Pagamento estornado", "ok");
+        monitor.forcar();
+      },
+    });
+  }
+
+  // --- Abertura, movimentos e fechamento do caixa -------------------------
+
+  function renderBarraCaixa() {
+    if (!$("barra-caixa")) return;
+    const s = estado.sessao;
+    const status = $("status-caixa");
+    if (estado.caixa_aberto && s) {
+      status.replaceChildren(
+        el("span", { class: "aberto" }, "● Caixa aberto"),
+        ` desde ${hora(s.aberto_em)} (${s.aberto_por_nome}) · ${s.qtd_vendas} venda(s): `,
+        el("strong", {}, moeda(s.total_vendas)));
+    } else if (estado.caixa_aberto) {
+      status.replaceChildren(el("span", { class: "aberto" }, "● Caixa aberto"));
+    } else {
+      status.replaceChildren(el("span", { class: "fechado" }, "● Caixa fechado"),
+        pode.caixa ? " — abra o caixa para receber pagamentos." : " — peça para quem tem permissão abrir o caixa.");
+    }
+    if (pode.caixa) {
+      $("abrir-caixa").hidden = estado.caixa_aberto;
+      $("sangria").hidden = $("suprimento").hidden = $("fechar-caixa").hidden = !estado.caixa_aberto;
     }
   }
-  $("emitir-N").addEventListener("click", () => emitir("N"));
-  $("emitir-P").addEventListener("click", () => emitir("P"));
-  $("chamar-proxima").addEventListener("click", async () => {
-    try {
-      const r = await api("POST", "/api/senhas/chamar-proxima", { guiche: $("guiche").value.trim() });
-      aviso("Chamando senha " + r.senha.codigo, "ok");
-      monitor.forcar();
-    } catch (err) {
-      aviso(err.message, "erro");
-    }
-  });
+
+  if (pode.caixa) {
+    $("abrir-caixa").addEventListener("click", () => {
+      const valor = campoDinheiro({ required: true });
+      dialogo({
+        titulo: "Abrir caixa",
+        corpo: el("div", {}, el("label", {}, "Fundo de troco: quanto em dinheiro tem na gaveta agora? (R$)"), valor),
+        confirmar: "Abrir caixa",
+        aoConfirmar: async () => {
+          const c = centavos(valor.value);
+          if (Number.isNaN(c)) throw new Error("Valor inválido.");
+          await api("POST", "/api/caixa/abrir", { valor_abertura: c });
+          aviso("Caixa aberto", "ok");
+          monitor.forcar();
+        },
+      });
+    });
+
+    const movimento = (tipo) => () => {
+      const valor = campoDinheiro({ required: true });
+      const motivo = el("input", { maxlength: 200, required: true,
+        placeholder: tipo === "sangria" ? "Ex.: depósito no banco, pagamento de fornecedor" : "Ex.: reforço de troco" });
+      dialogo({
+        titulo: tipo === "sangria" ? "Sangria (retirar dinheiro do caixa)" : "Suprimento (colocar dinheiro no caixa)",
+        corpo: el("div", {}, el("label", {}, "Valor (R$)"), valor, el("label", {}, "Motivo"), motivo),
+        confirmar: "Registrar",
+        aoConfirmar: async () => {
+          const c = centavos(valor.value);
+          if (Number.isNaN(c) || c <= 0) throw new Error("Valor inválido.");
+          await api("POST", "/api/caixa/movimento", { tipo, valor: c, motivo: motivo.value });
+          aviso(tipo === "sangria" ? "Sangria registrada" : "Suprimento registrado", "ok");
+          monitor.forcar();
+        },
+      });
+    };
+    $("sangria").addEventListener("click", movimento("sangria"));
+    $("suprimento").addEventListener("click", movimento("suprimento"));
+
+    $("fechar-caixa").addEventListener("click", () => {
+      const s = estado.sessao;
+      const contado = campoDinheiro({ required: true });
+      const obs = el("input", { maxlength: 300, placeholder: "Opcional" });
+      const pendentes = estado.contas.length;
+      dialogo({
+        titulo: "Fechar caixa",
+        corpo: el("div", {},
+          el("div", { class: "pagamento-resumo" },
+            el("div", { class: "linha-valor" }, el("span", {}, `Vendas (${s.qtd_vendas})`), el("strong", {}, moeda(s.total_vendas))),
+            ...Object.entries(estado.formas).filter(([f]) => s.por_forma[f]).map(([f, nome]) =>
+              el("div", { class: "linha-valor" }, el("span", {}, "  " + nome), el("span", {}, moeda(s.por_forma[f]))))),
+          pendentes ? el("p", { class: "negativo" }, `Atenção: ${pendentes} conta(s) ainda a receber. Elas continuam em aberto para o próximo caixa.`) : null,
+          el("label", {}, "Conte o dinheiro da gaveta (incluindo o fundo de troco). Quanto tem? (R$)"), contado,
+          el("label", {}, "Observação"), obs),
+        confirmar: "Fechar caixa",
+        aoConfirmar: async () => {
+          const c = centavos(contado.value);
+          if (Number.isNaN(c)) throw new Error("Valor inválido.");
+          const r = await api("POST", "/api/caixa/fechar", { valor_contado: c, observacao: obs.value });
+          monitor.forcar();
+          mostrarFechamento(r.sessao, r.impresso);
+        },
+      });
+    });
+  }
+
+  function mostrarFechamento(s, impresso) {
+    const dif = s.diferenca || 0;
+    const linha = (rotulo, valor, classe) => el("div", { class: "linha-valor " + (classe || "") }, el("span", {}, rotulo), el("span", {}, valor));
+    dialogo({
+      titulo: "Caixa fechado",
+      corpo: el("div", {},
+        linha(`Vendas (${s.qtd_vendas})`, moeda(s.total_vendas)),
+        ...Object.entries(estado.formas).filter(([f]) => s.por_forma[f]).map(([f, nome]) => linha("  " + nome, moeda(s.por_forma[f]))),
+        el("hr"),
+        linha("Fundo de troco", moeda(s.valor_abertura)),
+        linha("+ Vendas em dinheiro", moeda(s.por_forma.dinheiro || 0)),
+        linha("+ Suprimentos", moeda(s.suprimentos)),
+        linha("− Sangrias", moeda(s.sangrias)),
+        linha("Dinheiro esperado", moeda(s.esperado_dinheiro), "destaque"),
+        linha("Dinheiro contado", moeda(s.valor_contado)),
+        el("div", { class: "linha-valor destaque " + (dif === 0 ? "positivo" : "negativo") },
+          el("span", {}, dif === 0 ? "Sem diferença ✓" : dif > 0 ? "SOBRA" : "FALTA"), el("span", {}, moeda(Math.abs(dif)))),
+        impresso ? el("p", { class: "rotulo" }, "Comprovante enviado para a impressora do caixa.") : null),
+      confirmar: "OK", cancelar: null,
+    });
+  }
 
   // --- Atualização periódica ---------------------------------------------
-
-  let estado = {};
 
   function aplicarEstado(dados) {
     estado = dados;
     $("nome-loja").textContent = "— " + dados.loja;
 
-    const idsProdutos = JSON.stringify(dados.produtos.map((p) => [p.id, p.nome, p.preco_centavos, p.foto, p.categoria]));
-    if (idsProdutos !== JSON.stringify(produtos.map((p) => [p.id, p.nome, p.preco_centavos, p.foto, p.categoria]))) {
-      produtos = dados.produtos;
-      carrinho = carrinho.filter((i) => produtos.some((p) => p.id === i.produto.id));
-      renderCategorias();
-      renderProdutos();
+    if (pode.pedidos) {
+      const assinatura = JSON.stringify(dados.produtos.map((p) => [p.id, p.nome, p.preco_centavos, p.foto, p.categoria]));
+      if (assinatura !== JSON.stringify(produtos.map((p) => [p.id, p.nome, p.preco_centavos, p.foto, p.categoria]))) {
+        produtos = dados.produtos;
+        carrinho = carrinho.filter((i) => produtos.some((p) => p.id === i.produto.id));
+        renderCategorias();
+        renderProdutos();
+      }
       renderCarrinho();
+
+      const prontos = dados.pedidos.filter((p) => p.status === "pronto");
+      preencherLista("lista-prontos", "n-prontos", prontos, "Nenhum pedido pronto esperando chamada.");
+      preencherLista("lista-cozinha", "n-cozinha", dados.pedidos.filter((p) => p.status === "novo" || p.status === "preparando"), "Nenhum pedido na cozinha.");
+      preencherLista("lista-chamados", "n-chamados", dados.pedidos.filter((p) => p.status === "chamado").reverse(), "Ninguém aguardando retirada.");
+
+      // Avisos sonoros: pedido que acabou de ficar pronto e chamado de garçom novo.
+      const idsProntos = new Set(prontos.map((p) => p.id));
+      if (prontosVistos && [...idsProntos].some((id) => !prontosVistos.has(id))) bip("novo");
+      prontosVistos = idsProntos;
+      const idsChamados = new Set(dados.chamados_garcom.map((c) => c.id));
+      if (chamadosVistos && [...idsChamados].some((id) => !chamadosVistos.has(id))) bip("garcom");
+      chamadosVistos = idsChamados;
+
+      $("chamados-garcom").replaceChildren(...dados.chamados_garcom.map((c) =>
+        el("div", { class: "alerta-garcom" },
+          c.tipo === "conta" ? "🧾 Mesa " + c.mesa + " pediu a conta" : "🙋 Mesa " + c.mesa + " chamou o garçom",
+          el("span", { style: "font-weight: 400; opacity: .8" }, "há " + minutosDesde(c.criado_em) + " min"),
+          el("button", { onclick: () => acao("POST", `/api/garcom/${c.id}/atender`) }, "Atendido"))));
     }
-
-    const prontos = dados.pedidos.filter((p) => p.status === "pronto");
-    const cozinha = dados.pedidos.filter((p) => p.status === "novo" || p.status === "preparando");
-    const chamados = dados.pedidos.filter((p) => p.status === "chamado").reverse();
-    preencherLista("lista-prontos", "n-prontos", prontos, "Nenhum pedido pronto esperando chamada.");
-    preencherLista("lista-cozinha", "n-cozinha", cozinha, "Nenhum pedido na cozinha.");
-    preencherLista("lista-chamados", "n-chamados", chamados, "Ninguém aguardando retirada.");
-
-    // Avisos sonoros: pedido que acabou de ficar pronto e chamado de garçom novo.
-    const idsProntos = new Set(prontos.map((p) => p.id));
-    if (prontosVistos && [...idsProntos].some((id) => !prontosVistos.has(id))) bip("novo");
-    prontosVistos = idsProntos;
-
-    const idsChamados = new Set(dados.chamados_garcom.map((c) => c.id));
-    if (chamadosVistos && [...idsChamados].some((id) => !chamadosVistos.has(id))) bip("garcom");
-    chamadosVistos = idsChamados;
-
-    $("chamados-garcom").replaceChildren(...dados.chamados_garcom.map((c) =>
-      el("div", { class: "alerta-garcom" },
-        (c.tipo === "conta" ? "🧾 Mesa " + c.mesa + " pediu a conta" : "🙋 Mesa " + c.mesa + " chamou o garçom"),
-        el("span", { style: "font-weight: 400; opacity: .8" }, "há " + minutosDesde(c.criado_em) + " min"),
-        el("button", { onclick: () => acao(`/api/garcom/${c.id}/atender`) }, "Atendido"))));
-
-    $("fila-N").textContent = dados.senhas.aguardando.N || 0;
-    $("fila-P").textContent = dados.senhas.aguardando.P || 0;
-    $("chamar-proxima").disabled = !dados.senhas.total;
-    $("senhas-chamadas").replaceChildren(...dados.senhas_chamadas.map((s) =>
-      el("div", { class: "senha-chamada" },
-        el("strong", {}, s.codigo),
-        el("span", { class: "rotulo" }, s.guiche ? "Guichê " + s.guiche : "sem guichê"),
-        el("span", { class: "espaco" }),
-        el("button", { class: "discreto", onclick: () => acao(`/api/pedidos/${s.id}/chamar`, {}, "Chamada de novo") }, "🔁"),
-        el("button", { class: "discreto", onclick: () => acao(`/api/pedidos/${s.id}/status`, { status: "entregue" }) }, "✓ Atendida"))));
+    renderContas();
+    renderRecebidos();
+    renderBarraCaixa();
   }
 
-  renderCarrinho();
   const monitor = C.acompanhar("/api/estado", aplicarEstado, 2000);
   // Atualiza os "há X min" mesmo sem nada mudar no servidor.
   setInterval(() => monitor.forcar(), 30000);

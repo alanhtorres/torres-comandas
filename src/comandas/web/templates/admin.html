@@ -11,17 +11,38 @@
   <header class="topo">
     <h1>⚙️ Administração</h1>
     <span class="espaco"></span>
-    <nav><a href="/">Início</a><a href="/caixa">Caixa</a><a href="/sair">Sair</a></nav>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
+    <nav><a href="/">Início</a>{% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}<a href="/sair">Sair</a></nav>
   </header>
   <nav class="abas">
-    <a href="#produtos" data-aba="produtos">Cardápio / produtos</a>
-    <a href="#mesas" data-aba="mesas">Mesas e QR codes</a>
-    <a href="#midias" data-aba="midias">Fotos e vídeos do painel</a>
-    <a href="#config" data-aba="config">Configurações</a>
+    {% if pode('relatorios') %}<a href="#relatorios" data-aba="relatorios">Relatórios do caixa</a>{% endif %}
+    {% if pode('cardapio') %}<a href="#produtos" data-aba="produtos">Cardápio</a>{% endif %}
+    {% if pode('mesas') %}<a href="#mesas" data-aba="mesas">Mesas e QR codes</a>{% endif %}
+    {% if pode('midias') %}<a href="#midias" data-aba="midias">Fotos e vídeos do painel</a>{% endif %}
+    {% if pode('usuarios') %}<a href="#usuarios" data-aba="usuarios">Usuários e permissões</a>{% endif %}
+    {% if pode('historico') %}<a href="#historico" data-aba="historico">Histórico de ações</a>{% endif %}
+    {% if pode('configuracoes') %}<a href="#config" data-aba="config">Configurações</a>{% endif %}
   </nav>
 
   <main>
-    <!-- Produtos -->
+    {% if pode('relatorios') %}
+    <section id="aba-relatorios" class="aba" hidden>
+      <div class="cartao linha filtros">
+        <label class="inline">De <input type="date" id="rel-de"></label>
+        <label class="inline">até <input type="date" id="rel-ate"></label>
+        <button data-periodo="0">Hoje</button>
+        <button data-periodo="1">Ontem</button>
+        <button data-periodo="7">7 dias</button>
+        <button data-periodo="30">30 dias</button>
+        <button data-periodo="mes">Este mês</button>
+        <span class="espaco"></span>
+        <a id="rel-csv" href="#"><button>⬇ Planilha (Excel)</button></a>
+      </div>
+      <div id="relatorio"></div>
+    </section>
+    {% endif %}
+
+    {% if pode('cardapio') %}
     <section id="aba-produtos" class="aba" hidden>
       <form id="form-produto" class="cartao">
         <h2 id="titulo-form-produto">Novo produto</h2>
@@ -44,8 +65,9 @@
         <div id="lista-produtos"></div>
       </div>
     </section>
+    {% endif %}
 
-    <!-- Mesas -->
+    {% if pode('mesas') %}
     <section id="aba-mesas" class="aba" hidden>
       <div class="cartao">
         <h2>Adicionar mesas</h2>
@@ -69,8 +91,9 @@
         <div id="lista-mesas" class="grade-mesas"></div>
       </div>
     </section>
+    {% endif %}
 
-    <!-- Mídias -->
+    {% if pode('midias') %}
     <section id="aba-midias" class="aba" hidden>
       <div class="cartao">
         <h2>Enviar fotos e vídeos para o painel</h2>
@@ -87,8 +110,36 @@
         <div id="lista-midias"></div>
       </div>
     </section>
+    {% endif %}
 
-    <!-- Configurações -->
+    {% if pode('usuarios') %}
+    <section id="aba-usuarios" class="aba" hidden>
+      <div class="cartao">
+        <div class="linha" style="justify-content: space-between">
+          <h2 style="margin: 0">Usuários</h2>
+          <button id="novo-usuario" class="primario">+ Novo usuário</button>
+        </div>
+        <p class="dica">Cada pessoa da equipe deve ter o próprio usuário: tudo o que ela faz fica registrado no Histórico
+          com o nome dela. Desative quem sair da empresa (o histórico continua guardado).</p>
+        <div id="lista-usuarios"></div>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if pode('historico') %}
+    <section id="aba-historico" class="aba" hidden>
+      <div class="cartao linha filtros">
+        <label class="inline">De <input type="date" id="hist-de"></label>
+        <label class="inline">até <input type="date" id="hist-ate"></label>
+        <select id="hist-usuario" style="width: auto"><option value="">Todos os usuários</option></select>
+        <input id="hist-busca" type="search" placeholder="Buscar (ex.: cancelou, mesa 4, sangria)" style="flex: 1; min-width: 180px">
+        <button id="hist-filtrar" class="primario">Filtrar</button>
+      </div>
+      <div class="cartao"><div id="lista-historico"></div></div>
+    </section>
+    {% endif %}
+
+    {% if pode('configuracoes') %}
     <section id="aba-config" class="aba" hidden>
       <form id="form-config">
         <div class="cartao">
@@ -97,8 +148,8 @@
           <input id="cfg-nome_loja" name="nome_loja" maxlength="60">
           <label for="cfg-url_base">Endereço deste servidor na rede (usado nos QR codes)</label>
           <input id="cfg-url_base" name="url_base" placeholder="">
-          <p class="dica">Deixe vazio para detectar sozinho. Se o IP do PC mudar, os QR codes impressos param de funcionar —
-            reserve um IP fixo para este PC no roteador (recomendado).</p>
+          <p class="dica">Deixe vazio para detectar sozinho. Recomendado: reserve um IP fixo para este PC no roteador e
+            preencha aqui (ex.: http://192.168.0.10:8090) — assim os QR codes impressos nunca mudam.</p>
         </div>
 
         <div class="cartao">
@@ -108,28 +159,28 @@
           <label class="inline"><input type="checkbox" name="som_chamada"> Tocar aviso sonoro no painel a cada chamada</label>
           <label class="inline"><input type="checkbox" name="voz_chamada"> Anunciar por voz no painel ("Pedido número 42, pode retirar")</label>
           <label class="inline"><input type="checkbox" name="mostrar_nome_cliente_painel"> Mostrar o nome do cliente no painel</label>
-          <label class="inline"><input type="checkbox" name="senha_preferencial_primeiro"> Senhas preferenciais têm prioridade na fila</label>
           <div class="grade-form">
             <div><label for="cfg-historico_painel">Quantas chamadas no histórico do painel</label><input id="cfg-historico_painel" name="historico_painel" type="number" min="1" max="20"></div>
             <div><label for="cfg-duracao_foto_painel">Segundos de cada foto no painel</label><input id="cfg-duracao_foto_painel" name="duracao_foto_painel" type="number" min="2" max="300"></div>
+            <div><label for="cfg-taxa_servico_percentual">Taxa de serviço sugerida (%) — 0 esconde o botão</label><input id="cfg-taxa_servico_percentual" name="taxa_servico_percentual" type="number" min="0" max="30"></div>
           </div>
         </div>
 
         <div class="cartao">
           <h2>Impressoras térmicas de rede</h2>
           <p class="dica">Impressoras com rede (Ethernet/Wi-Fi) no padrão ESC/POS — Epson, Elgin, Bematech, Tanca e similares — pela porta 9100.
-            Descubra o IP imprimindo a folha de autoteste da impressora.</p>
+            Descubra o IP imprimindo a folha de autoteste da impressora. Pode ser a mesma impressora para as duas funções.</p>
           <label class="inline"><input type="checkbox" name="impressora_cozinha_ativa"> Imprimir os pedidos na cozinha</label>
           <div class="grade-form">
             <div><label for="cfg-impressora_cozinha_host">IP da impressora da cozinha</label><input id="cfg-impressora_cozinha_host" name="impressora_cozinha_host" placeholder="192.168.0.50"></div>
             <div><label for="cfg-impressora_cozinha_porta">Porta</label><input id="cfg-impressora_cozinha_porta" name="impressora_cozinha_porta" type="number"></div>
             <div><label>&nbsp;</label><button type="button" data-teste="cozinha">Imprimir teste</button></div>
           </div>
-          <label class="inline" style="margin-top: 16px"><input type="checkbox" name="impressora_senhas_ativa"> Imprimir as senhas (totem / caixa)</label>
+          <label class="inline" style="margin-top: 16px"><input type="checkbox" name="impressora_caixa_ativa"> Impressora do caixa (conferência de conta e fechamento de caixa)</label>
           <div class="grade-form">
-            <div><label for="cfg-impressora_senhas_host">IP da impressora de senhas</label><input id="cfg-impressora_senhas_host" name="impressora_senhas_host" placeholder="192.168.0.51"></div>
-            <div><label for="cfg-impressora_senhas_porta">Porta</label><input id="cfg-impressora_senhas_porta" name="impressora_senhas_porta" type="number"></div>
-            <div><label>&nbsp;</label><button type="button" data-teste="senhas">Imprimir teste</button></div>
+            <div><label for="cfg-impressora_caixa_host">IP da impressora do caixa</label><input id="cfg-impressora_caixa_host" name="impressora_caixa_host" placeholder="192.168.0.51"></div>
+            <div><label for="cfg-impressora_caixa_porta">Porta</label><input id="cfg-impressora_caixa_porta" name="impressora_caixa_porta" type="number"></div>
+            <div><label>&nbsp;</label><button type="button" data-teste="caixa">Imprimir teste</button></div>
           </div>
           <div class="grade-form">
             <div><label for="cfg-impressora_colunas">Largura do papel</label>
@@ -141,20 +192,10 @@
           </div>
         </div>
 
-        <div class="cartao">
-          <h2>Acesso da equipe (PIN)</h2>
-          <p class="dica" id="estado-pin"></p>
-          <p class="dica">Clientes conectados no Wi-Fi da loja conseguem abrir o endereço do servidor. Com um PIN, só a equipe acessa
-            caixa, cozinha, totem e administração (o painel da TV e o cardápio do QR code continuam livres).</p>
-          <div class="grade-form">
-            <div><label for="novo-pin">Novo PIN (4 a 12 números)</label><input id="novo-pin" inputmode="numeric" autocomplete="new-password" maxlength="12"></div>
-            <div><label>&nbsp;</label><label class="inline"><input id="remover-pin" type="checkbox"> Remover o PIN (acesso livre)</label></div>
-          </div>
-        </div>
-
         <div class="barra-salvar"><button type="submit" class="primario grande">Salvar configurações</button></div>
       </form>
     </section>
+    {% endif %}
   </main>
 
   <script src="{{ url_for('static', filename='comum.js') }}"></script>

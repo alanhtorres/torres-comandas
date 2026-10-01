@@ -15,7 +15,8 @@
     <span class="etiqueta preparando" id="n-preparo">0 em preparo</span>
     <span class="espaco"></span>
     <span id="relogio" style="font-variant-numeric: tabular-nums; font-size: 1.2rem"></span>
-    <nav><a href="/">Início</a><a href="/caixa">Caixa</a></nav>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
+    <nav><a href="/">Início</a>{% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}<a href="/sair">Sair</a></nav>
   </header>
   <main id="pedidos" class="grade-cozinha"></main>
   <section id="prontos-recentes"></section>

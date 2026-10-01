@@ -182,6 +182,75 @@
     };
   }
 
+  // Converte o que foi digitado ("12,50", "12.50", "1.234,50", "R$ 3") em centavos.
+  function centavos(texto) {
+    const limpo = String(texto || "").replace(/[^\d,.-]/g, "");
+    if (!limpo) return 0;
+    const normalizado = limpo.includes(",") ? limpo.replace(/\./g, "").replace(",", ".") : limpo;
+    const valor = Number(normalizado);
+    return Number.isFinite(valor) ? Math.round(valor * 100) : NaN;
+  }
+
+  function reais(c) {
+    return (Number(c || 0) / 100).toFixed(2).replace(".", ",");
+  }
+
+  function campoDinheiro(props) {
+    return el("input", Object.assign({ type: "text", inputmode: "decimal", placeholder: "0,00", autocomplete: "off" }, props || {}));
+  }
+
+  // Janela de diálogo. `aoConfirmar` pode ser assíncrona; se der erro, a
+  // mensagem aparece na própria janela (que continua aberta).
+  function dialogo(opcoes) {
+    const o = Object.assign({ confirmar: "Confirmar", cancelar: "Cancelar" }, opcoes);
+    const d = el("dialog", { class: "dialogo" + (o.largo ? " largo" : "") });
+    const erro = el("p", { class: "erro-dialogo", hidden: true });
+    const btnOk = o.confirmar ? el("button", { class: (o.perigo ? "perigo" : "primario") + " grande", type: "submit" }, o.confirmar) : null;
+    const form = el("form", { method: "dialog" },
+      el("h2", {}, o.titulo),
+      o.corpo,
+      erro,
+      el("div", { class: "acoes-dialogo" },
+        o.cancelar ? el("button", { type: "button", class: "discreto", onclick: () => fechar() }, o.cancelar) : null,
+        btnOk));
+    function fechar() {
+      if (d.open) d.close();
+      d.remove();
+    }
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!o.aoConfirmar) return fechar();
+      btnOk.disabled = true;
+      erro.hidden = true;
+      try {
+        const r = await o.aoConfirmar();
+        if (r !== false) fechar();
+      } catch (err) {
+        erro.textContent = err.message;
+        erro.hidden = false;
+      } finally {
+        btnOk.disabled = false;
+      }
+    });
+    d.addEventListener("close", () => d.remove());
+    d.append(form);
+    document.body.append(d);
+    d.showModal();
+    const primeiro = d.querySelector("input:not([type=checkbox]), select, textarea");
+    if (primeiro) primeiro.focus();
+    return { fechar, elemento: d };
+  }
+
+  function dataHora(ts) {
+    return new Date(ts * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function hojeISO(deslocamentoDias) {
+    const d = new Date();
+    d.setDate(d.getDate() + (deslocamentoDias || 0));
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
   const STATUS_NOME = {
     novo: "Na fila",
     preparando: "Preparando",
@@ -191,5 +260,6 @@
     cancelado: "Cancelado",
   };
 
-  window.C = { api, moeda, el, minutosDesde, hora, aviso, bip, falar, somLiberado, liberarSom, acompanhar, STATUS_NOME };
+  window.C = { api, moeda, el, minutosDesde, hora, dataHora, hojeISO, aviso, bip, falar, somLiberado, liberarSom, acompanhar,
+    centavos, reais, campoDinheiro, dialogo, STATUS_NOME };
 })();
