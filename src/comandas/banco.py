@@ -48,15 +48,17 @@ CONFIG_PADRAO = {
 }
 
 # Chaves que nunca saem pela API de configuração.
-CONFIG_PRIVADA = {"secret_key"}
+CONFIG_PRIVADA = {"secret_key", "versao_permissoes"}
 
 # O que cada usuário pode acessar — o administrador marca uma a uma.
 PERMISSOES = {
     "pedidos": "Caixa: lançar e acompanhar pedidos, chamar no painel, atender garçom",
+    "garcom": "Página do garçom: pedidos na mesa pelo celular/tablet e alertas do QR code",
     "cozinha": "Tela da cozinha (iniciar preparo / pronto)",
     "receber": "Receber pagamentos",
     "caixa": "Abrir e fechar o caixa, sangria e suprimento",
-    "cancelar": "Cancelar pedidos e estornar pagamentos",
+    "cancelar": "Cancelar pedidos (com motivo)",
+    "estornar": "Estornar pagamentos já recebidos (aba Recebidos)",
     "cardapio": "Cadastro de produtos (cardápio)",
     "mesas": "Mesas e QR codes",
     "midias": "Fotos e vídeos do painel",
@@ -65,6 +67,13 @@ PERMISSOES = {
     "historico": "Histórico de ações dos usuários",
     "usuarios": "Usuários e permissões",
 }
+# Permissões criadas depois da 2.0.0: quem já administrava usuários recebe
+# automaticamente, pra não perder nenhum acesso que tinha (o estorno antes
+# vinha junto com "cancelar").
+PERMISSOES_NOVAS = {2: ["garcom", "estornar"]}
+
+ORIGENS = {"caixa": "Caixa", "qrcode": "QR code", "garcom": "Garçom"}
+
 # Permissões que dão acesso à tela de administração.
 PERMISSOES_ADMIN = ("cardapio", "mesas", "midias", "configuracoes", "relatorios", "historico", "usuarios")
 
@@ -72,7 +81,7 @@ PERMISSOES_ADMIN = ("cardapio", "mesas", "midias", "configuracoes", "relatorios"
 MODELOS = {
     "admin": ("Administrador", list(PERMISSOES)),
     "caixa": ("Caixa", ["pedidos", "cozinha", "receber", "caixa"]),
-    "garcom": ("Garçom", ["pedidos"]),
+    "garcom": ("Garçom", ["garcom"]),
     "cozinha": ("Cozinha", ["cozinha"]),
 }
 
@@ -228,6 +237,14 @@ CREATE TABLE IF NOT EXISTS midias (
 # Colunas acrescentadas depois da versão 1.0 — bancos antigos ganham estas
 # colunas automaticamente ao abrir (os dados existentes são preservados).
 COLUNAS_NOVAS = {
+    "produtos": {
+        # Produto que precisa de preparo: aparece na cozinha e sai na
+        # impressora dela. Bebidas em lata, chips etc. vão direto do caixa.
+        "vai_cozinha": "INTEGER NOT NULL DEFAULT 1",
+    },
+    "pedido_itens": {
+        "vai_cozinha": "INTEGER NOT NULL DEFAULT 1",
+    },
     "pedidos": {
         "usuario_id": "INTEGER",
         "usuario_nome": "TEXT NOT NULL DEFAULT ''",
@@ -286,6 +303,20 @@ class Banco:
             for nome, tipo in colunas.items():
                 if nome not in existentes:
                     self.conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}")
+        linha = self.conn.execute("SELECT valor FROM config WHERE chave = 'versao_permissoes'").fetchone()
+        versao = json.loads(linha["valor"]) if linha else 1
+        for alvo, novas in sorted(PERMISSOES_NOVAS.items()):
+            if versao >= alvo:
+                continue
+            for u in self.conn.execute("SELECT id, permissoes FROM usuarios").fetchall():
+                perms = json.loads(u["permissoes"])
+                if "usuarios" in perms:
+                    perms += [p for p in novas if p not in perms]
+                    self.conn.execute("UPDATE usuarios SET permissoes = ? WHERE id = ?", (json.dumps(perms), u["id"]))
+            versao = alvo
+        self.conn.execute(
+            "INSERT INTO config (chave, valor) VALUES ('versao_permissoes', ?) "
+            "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor", (json.dumps(versao),))
 
     @contextmanager
     def _transacao(self):
@@ -517,6 +548,7 @@ class Banco:
     def _produto_dict(linha) -> dict:
         dados = dict(linha)
         dados["ativo"] = bool(dados["ativo"])
+        dados["vai_cozinha"] = bool(dados["vai_cozinha"])
         return dados
 
     def obter_produto(self, produto_id: int) -> Optional[dict]:
@@ -535,6 +567,7 @@ class Banco:
             "categoria": _texto(dados.get("categoria"), 40) or "Geral",
             "preco_centavos": _centavos(dados.get("preco_centavos", 0), "preço"),
             "ativo": 1 if dados.get("ativo", True) else 0,
+            "vai_cozinha": 1 if dados.get("vai_cozinha", True) else 0,
             "ordem": int(dados.get("ordem") or 0),
         }
 
@@ -542,11 +575,12 @@ class Banco:
         valores = self._validar_produto(dados)
         with self._transacao():
             cur = self.conn.execute(
-                "INSERT INTO produtos (nome, descricao, categoria, preco_centavos, ativo, ordem) "
-                "VALUES (:nome, :descricao, :categoria, :preco_centavos, :ativo, :ordem)",
+                "INSERT INTO produtos (nome, descricao, categoria, preco_centavos, ativo, vai_cozinha, ordem) "
+                "VALUES (:nome, :descricao, :categoria, :preco_centavos, :ativo, :vai_cozinha, :ordem)",
                 valores,
             )
-            self._registrar(por, "Cadastrou produto", f"{valores['nome']} — {moeda(valores['preco_centavos'])}")
+            self._registrar(por, "Cadastrou produto", f"{valores['nome']} — {moeda(valores['preco_centavos'])}"
+                            + ("" if valores["vai_cozinha"] else " (não vai para a cozinha)"))
         return self.obter_produto(cur.lastrowid)
 
     def atualizar_produto(self, produto_id: int, dados: dict, por: Optional[dict] = None) -> dict:
@@ -563,15 +597,26 @@ class Banco:
             mudancas.append(f"preço: {moeda(atual['preco_centavos'])} → {moeda(valores['preco_centavos'])}")
         if bool(valores["ativo"]) != atual["ativo"]:
             mudancas.append("disponível" if valores["ativo"] else "pausado (indisponível)")
+        if bool(valores["vai_cozinha"]) != atual["vai_cozinha"]:
+            mudancas.append("passa a ir para a cozinha" if valores["vai_cozinha"] else "não vai mais para a cozinha")
         with self._transacao():
             self.conn.execute(
                 "UPDATE produtos SET nome = :nome, descricao = :descricao, categoria = :categoria, "
-                "preco_centavos = :preco_centavos, ativo = :ativo, ordem = :ordem WHERE id = :id",
+                "preco_centavos = :preco_centavos, ativo = :ativo, vai_cozinha = :vai_cozinha, ordem = :ordem WHERE id = :id",
                 valores,
             )
             if mudancas:
                 self._registrar(por, "Alterou produto", f"{atual['nome']}: " + "; ".join(mudancas))
         return self.obter_produto(produto_id)
+
+    def definir_cozinha_categoria(self, categoria: str, vai_cozinha: bool, por: Optional[dict] = None) -> int:
+        """Marca de uma vez todos os produtos da categoria (ex.: "Bebidas")."""
+        with self._transacao():
+            cur = self.conn.execute("UPDATE produtos SET vai_cozinha = ? WHERE categoria = ?",
+                                    (1 if vai_cozinha else 0, categoria))
+            self._registrar(por, "Alterou categoria", f"{categoria}: "
+                            + ("todos os produtos vão para a cozinha" if vai_cozinha else "nenhum produto vai para a cozinha"))
+        return cur.rowcount
 
     def definir_foto_produto(self, produto_id: int, arquivo: Optional[str], por: Optional[dict] = None) -> None:
         produto = self.obter_produto(produto_id)
@@ -664,6 +709,8 @@ class Banco:
                      cliente: str = "", observacao: str = "", por: Optional[dict] = None) -> dict:
         if not isinstance(itens, list) or not itens:
             raise ErroNegocio("O pedido está vazio.")
+        if origem not in ORIGENS:
+            raise ErroNegocio("Origem do pedido inválida.")
         linhas_itens = []
         total = 0
         for item in itens:
@@ -680,6 +727,9 @@ class Banco:
             linhas_itens.append((produto, quantidade, _texto(item.get("observacao"), 200)))
             total += produto["preco_centavos"] * quantidade
 
+        # Sem nada para preparar (só bebidas, chips...), o pedido já nasce
+        # "pronto": não passa pela cozinha nem pela impressora dela.
+        precisa_cozinha = any(p["vai_cozinha"] for p, _, _ in linhas_itens)
         with self._transacao():
             agora = self.agora()
             dia = self._dia()
@@ -687,21 +737,24 @@ class Banco:
             numero = (linha["n"] or 0) + 1
             cur = self.conn.execute(
                 "INSERT INTO pedidos (tipo, dia, numero, codigo, origem, mesa, cliente, observacao, status, "
-                "total_centavos, criado_em, atualizado_em, usuario_id, usuario_nome) "
-                "VALUES ('pedido', ?, ?, ?, ?, ?, ?, ?, 'novo', ?, ?, ?, ?, ?)",
+                "total_centavos, criado_em, atualizado_em, pronto_em, usuario_id, usuario_nome) "
+                "VALUES ('pedido', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (dia, numero, str(numero), origem, _texto(mesa, 40), _texto(cliente, 60), _texto(observacao, 300),
-                 total, agora, agora, (por or {}).get("id"), (por or {}).get("nome") or ""),
+                 "novo" if precisa_cozinha else "pronto", total, agora, agora, None if precisa_cozinha else agora,
+                 (por or {}).get("id"), (por or {}).get("nome") or ""),
             )
             pedido_id = cur.lastrowid
             for produto, quantidade, obs in linhas_itens:
                 self.conn.execute(
-                    "INSERT INTO pedido_itens (pedido_id, produto_id, nome, preco_centavos, quantidade, observacao) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (pedido_id, produto["id"], produto["nome"], produto["preco_centavos"], quantidade, obs),
+                    "INSERT INTO pedido_itens (pedido_id, produto_id, nome, preco_centavos, quantidade, observacao, vai_cozinha) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (pedido_id, produto["id"], produto["nome"], produto["preco_centavos"], quantidade, obs,
+                     1 if produto["vai_cozinha"] else 0),
                 )
             resumo = ", ".join(f"{q}x {p['nome']}" for p, q, _ in linhas_itens)
             onde = f" — mesa {mesa}" if mesa else ""
-            self._registrar(por, "Lançou pedido", f"Nº {numero}{onde}: {resumo} ({moeda(total)})", pedido_id)
+            sem_cozinha = "" if precisa_cozinha else " — sem preparo, já pronto"
+            self._registrar(por, "Lançou pedido", f"Nº {numero}{onde}: {resumo} ({moeda(total)}){sem_cozinha}", pedido_id)
         return self.obter_pedido(pedido_id)
 
     def obter_pedido(self, pedido_id: int) -> Optional[dict]:
@@ -712,10 +765,11 @@ class Banco:
             pedido = dict(linha)
             pedido["pago"] = pedido["recebimento_id"] is not None
             pedido["itens"] = [
-                dict(i) for i in self.conn.execute(
-                    "SELECT produto_id, nome, preco_centavos, quantidade, observacao "
+                {**dict(i), "vai_cozinha": bool(i["vai_cozinha"])} for i in self.conn.execute(
+                    "SELECT produto_id, nome, preco_centavos, quantidade, observacao, vai_cozinha "
                     "FROM pedido_itens WHERE pedido_id = ? ORDER BY id", (pedido_id,))
             ]
+            pedido["vai_cozinha"] = any(i["vai_cozinha"] for i in pedido["itens"])
             return pedido
 
     def _exigir_pedido(self, pedido_id: int) -> dict:

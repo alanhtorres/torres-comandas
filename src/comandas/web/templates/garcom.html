@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Garçom — Torres Comandas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='garcom.css') }}">
+</head>
+<body>
+  <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
+  <header class="topo">
+    <h1>🛎️ Garçom</h1>
+    <span class="espaco"></span>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
+    <nav><a href="/">Início</a><a href="/sair">Sair</a></nav>
+  </header>
+
+  <div id="alertas"></div>
+
+  <main>
+    <section id="aba-novo" class="aba-garcom">
+      <h2>Mesa</h2>
+      <div id="mesas" class="grade-mesas"></div>
+      <input id="mesa-outra" maxlength="40" placeholder="Outra mesa / balcão (digite)">
+
+      <h2>Itens</h2>
+      <input id="busca" type="search" placeholder="Buscar produto...">
+      <div id="categorias" class="chips"></div>
+      <div id="produtos"></div>
+    </section>
+
+    <section id="aba-entregar" class="aba-garcom" hidden>
+      <p class="dica">Pedidos prontos esperando ser levados à mesa.</p>
+      <div id="lista-entregar"></div>
+    </section>
+
+    <section id="aba-mesas" class="aba-garcom" hidden>
+      <p class="dica">Contas abertas por mesa (ainda não pagas).</p>
+      <div id="lista-mesas"></div>
+    </section>
+  </main>
+
+  <button id="barra-pedido" class="barra-pedido" hidden></button>
+
+  <nav class="abas-rodape">
+    <button data-aba="novo" class="ativa">📝<span>Novo pedido</span></button>
+    <button data-aba="entregar">🍽️<span>Entregar <b id="n-entregar">0</b></span></button>
+    <button data-aba="mesas">🧾<span>Mesas <b id="n-mesas">0</b></span></button>
+  </nav>
+
+  <button id="ativar-som" class="amarelo" hidden>🔔 Ativar som e vibração dos alertas</button>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='garcom.js') }}"></script>
+</body>
+</html>

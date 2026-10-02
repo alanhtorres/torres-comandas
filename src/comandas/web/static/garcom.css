@@ -1,0 +1,65 @@
+body { padding-bottom: 150px; font-size: 17px; }
+main { max-width: 820px; margin: 0 auto; padding: 12px; }
+main h2 { font-size: 1rem; color: var(--texto-2); margin: 14px 0 8px; text-transform: uppercase; letter-spacing: .05em; }
+
+.grade-mesas { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.grade-mesas button { padding: 14px 0; font-size: 1.15rem; font-weight: 700; }
+.grade-mesas button.ativa { background: var(--destaque); color: #0f172a; }
+.grade-mesas button.com-conta { box-shadow: inset 0 -3px 0 var(--amarelo); }
+
+.chips { display: flex; gap: 6px; overflow-x: auto; margin: 10px 0; padding-bottom: 4px; }
+.chips button { flex: none; border-radius: 999px; padding: 8px 14px; }
+.chips button.ativo { background: var(--destaque); color: #0f172a; }
+
+.produto { display: flex; align-items: center; gap: 10px; background: var(--painel); border: 1px solid var(--borda);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+.produto img { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; flex: none; }
+.produto .info { flex: 1; min-width: 0; }
+.produto .nome { font-weight: 600; }
+.produto .preco { color: var(--destaque); font-size: .9rem; }
+.qtd { display: flex; align-items: center; gap: 6px; }
+.qtd button { width: 42px; height: 42px; padding: 0; font-size: 1.4rem; border-radius: 50%; }
+.qtd button.mais { background: var(--destaque); color: #0f172a; }
+.qtd span { min-width: 24px; text-align: center; font-weight: 800; font-size: 1.1rem; }
+
+.barra-pedido {
+  position: fixed; left: 10px; right: 10px; bottom: calc(70px + env(safe-area-inset-bottom));
+  max-width: 800px; margin: 0 auto;
+  background: var(--verde); color: #052e16; font-weight: 800; font-size: 1.05rem;
+  padding: 16px; border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+
+.abas-rodape {
+  position: fixed; left: 0; right: 0; bottom: 0; display: flex;
+  background: var(--painel); border-top: 1px solid var(--borda); padding-bottom: env(safe-area-inset-bottom); z-index: 5;
+}
+.abas-rodape button { flex: 1; background: transparent; border-radius: 0; display: flex; flex-direction: column; align-items: center;
+  gap: 2px; padding: 8px 0 10px; font-size: 1.3rem; color: var(--texto-2); }
+.abas-rodape button span { font-size: .8rem; }
+.abas-rodape button.ativa { color: var(--destaque); box-shadow: inset 0 3px 0 var(--destaque); }
+.abas-rodape b { background: var(--vermelho); color: #fff; border-radius: 999px; padding: 0 6px; font-size: .75rem; }
+.abas-rodape b.zero { background: var(--painel-2); color: var(--texto-2); }
+
+#alertas { position: sticky; top: 0; z-index: 6; display: flex; flex-direction: column; gap: 6px; padding: 0 10px; }
+#alertas:not(:empty) { padding-top: 10px; padding-bottom: 10px; background: rgba(15,23,42,.92); }
+.alerta { display: flex; align-items: center; gap: 10px; background: #7c2d12; border: 2px solid #fb923c; color: #ffedd5;
+  padding: 12px; border-radius: 12px; font-weight: 700; font-size: 1.1rem; animation: pulsar 1.2s ease-in-out infinite; }
+.alerta .espaco { flex: 1; }
+.alerta small { font-weight: 400; opacity: .8; display: block; font-size: .8rem; }
+.alerta button { background: #ffedd5; color: #7c2d12; padding: 10px 12px; font-weight: 700; }
+@keyframes pulsar { 50% { box-shadow: 0 0 0 6px rgba(251, 146, 60, 0.25); } }
+
+.cartao-entrega, .cartao-mesa { background: var(--painel); border: 1px solid var(--borda); border-left: 6px solid var(--verde);
+  border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+.cartao-mesa { border-left-color: var(--amarelo); }
+.cartao-entrega .topo-cartao, .cartao-mesa .topo-cartao { display: flex; align-items: baseline; gap: 10px; }
+.cartao-entrega .mesa, .cartao-mesa .mesa { font-size: 1.5rem; font-weight: 800; }
+.cartao-entrega .espaco, .cartao-mesa .espaco { flex: 1; }
+.cartao-entrega ul, .cartao-mesa ul { margin: 8px 0; padding-left: 20px; }
+.cartao-entrega .acoes, .cartao-mesa .acoes { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.cartao-entrega .acoes button { padding: 12px 18px; }
+
+.item-revisao { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--borda); }
+.item-revisao .obs { display: block; font-size: .85rem; color: var(--amarelo); }
+.item-revisao .editar { display: block; background: none; color: var(--texto-2); text-decoration: underline; padding: 0; font-size: .85rem; }
+#ativar-som { position: fixed; right: 12px; bottom: calc(140px + env(safe-area-inset-bottom)); z-index: 7; }

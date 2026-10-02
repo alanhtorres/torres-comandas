@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='caixa.css') }}">
 </head>
 <body data-pode-pedidos="{{ pode('pedidos')|int }}" data-pode-receber="{{ pode('receber')|int }}"
-      data-pode-caixa="{{ pode('caixa')|int }}" data-pode-cancelar="{{ pode('cancelar')|int }}">
+      data-pode-caixa="{{ pode('caixa')|int }}" data-pode-cancelar="{{ pode('cancelar')|int }}" data-pode-estornar="{{ pode('estornar')|int }}">
   <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
   <header class="topo">
     <h1>🧾 Caixa <span id="nome-loja" style="color: var(--texto-2); font-weight: 400"></span></h1>
@@ -17,6 +17,7 @@
     <nav>
       <a href="/">Início</a>
       {% if pode('cozinha') %}<a href="/cozinha">Cozinha</a>{% endif %}
+      {% if pode('garcom') %}<a href="/garcom">Garçom</a>{% endif %}
       <a href="/painel" target="_blank">Painel</a>
       {% if pode('cardapio', 'mesas', 'midias', 'configuracoes', 'relatorios', 'historico', 'usuarios') %}<a href="/admin">Administração</a>{% endif %}
     </nav>
@@ -59,7 +60,7 @@
         <div class="total-linha"><span>Total</span><strong id="total">R$ 0,00</strong></div>
         <div class="acoes-carrinho">
           <button id="limpar" class="discreto">Limpar</button>
-          <button id="enviar" class="primario grande" disabled>Enviar para a cozinha</button>
+          <button id="enviar" class="primario grande" disabled>Enviar pedido</button>
           {% if pode('receber') %}<button id="enviar-receber" class="verde grande" disabled title="Envia para a cozinha e já abre o pagamento">Enviar e receber</button>{% endif %}
         </div>
       </div>

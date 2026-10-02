@@ -93,8 +93,10 @@ def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: 
     c.cmd(ALINHAR_CENTRO).linha(nome_loja).linha("PEDIDO COZINHA")
     c.cmd(TAMANHO_DUPLO + NEGRITO_ON).linha(f"No {pedido['codigo']}").cmd(TAMANHO_NORMAL + NEGRITO_OFF)
     c.cmd(ALINHAR_ESQ)
-    origem = {"qrcode": "QR code", "caixa": "Caixa"}.get(pedido["origem"], pedido["origem"])
+    origem = {"qrcode": "QR code", "caixa": "Caixa", "garcom": "Garcom"}.get(pedido["origem"], pedido["origem"])
     info = f"Origem: {origem}"
+    if pedido["origem"] == "garcom" and pedido.get("usuario_nome"):
+        info += f" ({pedido['usuario_nome']})"
     if pedido.get("mesa"):
         info += f"   Mesa: {pedido['mesa']}"
     c.linha(info)
@@ -104,7 +106,8 @@ def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: 
     c.separador()
     # Itens em fonte dupla: é o que o cozinheiro precisa ler de longe.
     largura_dupla = max(10, colunas // 2)
-    for item in pedido["itens"]:
+    # Só o que precisa de preparo (bebida em lata, chips... saem pelo caixa).
+    for item in (i for i in pedido["itens"] if i.get("vai_cozinha", True)):
         c.cmd(TAMANHO_DUPLO + NEGRITO_ON).quebrar(f"{item['quantidade']}x {item['nome']}", largura_dupla)
         c.cmd(TAMANHO_NORMAL + NEGRITO_OFF)
         if item.get("observacao"):

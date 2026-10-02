@@ -80,7 +80,7 @@ def test_login_logout_e_redirecionamento(ambiente, admin):
     assert "Saiu do sistema" in acoes and "Tentativa de login recusada" in acoes
 
 
-@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/painel", "/admin", "/admin/qrcodes"])
+@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/garcom", "/painel", "/admin", "/admin/qrcodes"])
 def test_telas_abrem_para_o_admin(admin, caminho):
     r = admin.get(caminho)
     assert r.status_code == 200
@@ -378,3 +378,90 @@ def test_arquivos_nao_escapam_da_pasta(ambiente):
     c = app.test_client()
     assert c.get("/foto/..%2Fsegredo.txt").status_code == 404
     assert c.get("/midia/../segredo.txt").status_code == 404
+
+
+# --- Garçom, itens fora da cozinha e estorno ------------------------------------
+
+def test_pagina_do_garcom_e_pedido_na_mesa(ambiente, admin):
+    app, banco, _ = ambiente
+    p = _produto(admin)
+    banco.criar_mesa("8")
+    criar_usuario(admin, "carlos", ["garcom"])
+    garcom = entrar(app, "carlos")
+    assert garcom.get("/garcom").status_code == 200
+    assert garcom.get("/caixa").status_code == 403
+    estado = garcom.get("/api/estado").get_json()
+    assert estado["mesas"] == ["8"] and estado["produtos"][0]["nome"] == "X-Burger"
+    r = garcom.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]})
+    assert r.status_code == 400 and "mesa" in r.get_json()["erro"]
+    r = garcom.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}], "mesa": "8"})
+    pedido = r.get_json()["pedido"]
+    assert pedido["origem"] == "garcom" and pedido["usuario_nome"] == "Carlos"
+    # não recebe, não cancela, não chama no painel
+    assert garcom.post("/api/caixa/abrir", json={}).status_code == 403
+    assert garcom.post(f"/api/pedidos/{pedido['id']}/chamar").status_code == 403
+    assert garcom.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "cancelado", "motivo": "x"}).status_code == 403
+    # entrega na mesa
+    admin.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "pronto"})
+    assert garcom.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "entregue"}).status_code == 200
+    assert garcom.get("/api/estado").get_json()["contas"][0]["titulo"] == "Mesa 8"
+
+
+def test_garcom_recebe_chamado_do_qrcode(ambiente, admin):
+    app, banco, _ = ambiente
+    mesa = banco.criar_mesa("5")
+    criar_usuario(admin, "carlos", ["garcom"])
+    garcom = entrar(app, "carlos")
+    app.test_client().post(f"/api/cliente/{mesa['token']}/chamar", json={"tipo": "garcom"})
+    chamados = garcom.get("/api/estado").get_json()["chamados_garcom"]
+    assert [(c["mesa"], c["tipo"]) for c in chamados] == [("5", "garcom")]
+    assert garcom.post(f"/api/garcom/{chamados[0]['id']}/atender").status_code == 200
+    assert garcom.get("/api/estado").get_json()["chamados_garcom"] == []
+    assert "Atendeu chamado" in [a["acao"] for a in banco.listar_auditoria("2000-01-01", "2100-01-01") if a["usuario_nome"] == "Carlos"]
+
+
+def test_itens_sem_preparo_nao_vao_para_a_impressora_da_cozinha(ambiente, admin, impressora_falsa):
+    _, banco, _ = ambiente
+    banco.salvar_config({"impressora_cozinha_ativa": True, "impressora_cozinha_host": "127.0.0.1",
+                         "impressora_cozinha_porta": impressora_falsa.porta})
+    lata = admin.post("/api/produtos", json={"nome": "Coca lata", "preco_centavos": 600, "vai_cozinha": False}).get_json()["produto"]
+    burger = _produto(admin)
+    so_lata = admin.post("/api/pedidos", json={"itens": [{"produto_id": lata["id"]}]}).get_json()["pedido"]
+    assert so_lata["status"] == "pronto" and so_lata["impressao"] == ""
+    r = admin.post(f"/api/pedidos/{so_lata['id']}/imprimir")
+    assert r.status_code == 400 and "nada para a cozinha" in r.get_json()["erro"]
+    misto = admin.post("/api/pedidos", json={"itens": [{"produto_id": lata["id"]}, {"produto_id": burger["id"]}]}).get_json()["pedido"]
+    assert misto["status"] == "novo" and misto["impressao"] == "ok"
+    cupom = impressora_falsa.esperar()[0]
+    assert b"X-Burger" in cupom and b"Coca lata" not in cupom
+    assert len(impressora_falsa.recebidos) == 1
+
+
+def test_categoria_cozinha_pela_api(admin):
+    admin.post("/api/produtos", json={"nome": "Coca", "preco_centavos": 600, "categoria": "Bebidas"})
+    r = admin.post("/api/produtos/categoria-cozinha", json={"categoria": "Bebidas", "vai_cozinha": False})
+    assert r.get_json()["alterados"] == 1
+    assert admin.get("/api/produtos").get_json()["produtos"][0]["vai_cozinha"] is False
+
+
+def test_estorno_so_com_permissao_propria(ambiente, admin):
+    app, _, _ = ambiente
+    p = _produto(admin, preco=1000)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    rec = admin.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "pix", "valor": 1000}]}).get_json()["recebimento"]
+    criar_usuario(admin, "gerente", ["pedidos", "receber", "cancelar"])
+    criar_usuario(admin, "chefe", ["pedidos", "receber", "estornar"])
+    gerente, chefe = entrar(app, "gerente"), entrar(app, "chefe")
+    # cancelar pedido NÃO dá direito a estornar pagamento
+    assert gerente.post(f"/api/recebimentos/{rec['id']}/estornar", json={"motivo": "x"}).status_code == 403
+    pagina = gerente.get("/caixa").data.decode()
+    assert 'data-pode-estornar="0"' in pagina
+    assert chefe.post(f"/api/recebimentos/{rec['id']}/estornar", json={"motivo": "lançado errado"}).status_code == 200
+
+
+def test_modelo_caixa_nao_inclui_estorno(admin):
+    modelos = admin.get("/api/usuarios").get_json()["modelos"]
+    assert "estornar" not in modelos["caixa"]["permissoes"]
+    assert modelos["garcom"]["permissoes"] == ["garcom"]
+    assert "estornar" in modelos["admin"]["permissoes"]

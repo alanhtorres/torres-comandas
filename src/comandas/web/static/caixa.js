@@ -7,6 +7,7 @@
     receber: document.body.dataset.podeReceber === "1",
     caixa: document.body.dataset.podeCaixa === "1",
     cancelar: document.body.dataset.podeCancelar === "1",
+    estornar: document.body.dataset.podeEstornar === "1",
   };
 
   let estado = { pedidos: [], contas: [], recebimentos: [], formas: {}, chamados_garcom: [] };
@@ -107,7 +108,7 @@
         itens: carrinho.map((i) => ({ produto_id: i.produto.id, quantidade: i.quantidade, observacao: i.observacao })),
         cliente: $("cliente").value, mesa: $("mesa").value, observacao: $("obs").value,
       });
-      aviso("Pedido nº " + r.pedido.codigo + " enviado para a cozinha", "ok");
+      aviso("Pedido nº " + r.pedido.codigo + (r.pedido.vai_cozinha ? " enviado para a cozinha" : " registrado (sem preparo, já está pronto)"), "ok");
       limparCarrinho();
       monitor.forcar();
       if (receberDepois) dialogoPagamento([r.pedido], "Pedido nº " + r.pedido.codigo);
@@ -166,6 +167,7 @@
       botoes.push(el("button", { class: "discreto", title: "Cancelar pedido", onclick: () => dialogoCancelar(p) }, "✕"));
     }
     const quem = [p.origem === "qrcode" ? el("span", { class: "etiqueta qrcode" }, "QR code") : null,
+      p.origem === "garcom" ? el("span", { class: "etiqueta qrcode" }, "Garçom " + (p.usuario_nome || "")) : null,
       p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean);
     return el("div", { class: "pedido " + p.status },
       el("div", { class: "cabeca" },
@@ -296,7 +298,12 @@
         + (r.troco ? ` (troco ${moeda(r.troco)})` : "") + ` · ${r.usuario_nome}`
         + (r.estornado_em ? ` · ESTORNADO por ${r.estornado_por_nome}: ${r.motivo_estorno}` : ""))),
       el("strong", {}, moeda(r.total)),
-      pode.cancelar && !r.estornado_em ? el("button", { class: "discreto", onclick: () => dialogoEstorno(r) }, "Estornar") : el("span", {}))));
+      r.estornado_em ? el("span", {}) : el("button", {
+        class: "discreto",
+        disabled: !pode.estornar,
+        title: pode.estornar ? "Estornar este pagamento" : "Estorno liberado só para quem o administrador permitir",
+        onclick: () => dialogoEstorno(r),
+      }, "Estornar"))));
   }
 
   function dialogoEstorno(r) {

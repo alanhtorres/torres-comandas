@@ -201,6 +201,11 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def tela_cozinha():
         return render_template("cozinha.html")
 
+    @app.get("/garcom")
+    @exigir("garcom")
+    def tela_garcom():
+        return render_template("garcom.html")
+
     @app.get("/admin")
     @exigir(*PERMISSOES_ADMIN)
     def tela_admin():
@@ -233,7 +238,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         return request.args.get("v") == str(banco.versao)
 
     @app.get("/api/estado")
-    @exigir("pedidos", "cozinha", "receber", "caixa")
+    @exigir("pedidos", "garcom", "cozinha", "receber", "caixa")
     def api_estado():
         if _versao_igual():
             return jsonify({"versao": banco.versao, "mudou": False})
@@ -245,9 +250,10 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             "loja": cfg["nome_loja"],
             "usuario": usuario_atual(),
             "pedidos": banco.listar_pedidos(),
-            "chamados_garcom": banco.chamados_pendentes() if pode("pedidos") else [],
-            "produtos": banco.listar_produtos(somente_ativos=True) if pode("pedidos") else [],
-            "contas": banco.contas_abertas() if pode("pedidos", "receber") else [],
+            "chamados_garcom": banco.chamados_pendentes() if pode("pedidos", "garcom") else [],
+            "produtos": banco.listar_produtos(somente_ativos=True) if pode("pedidos", "garcom") else [],
+            "contas": banco.contas_abertas() if pode("pedidos", "receber", "garcom") else [],
+            "mesas": [m["numero"] for m in banco.listar_mesas()] if pode("garcom") else [],
             "caixa_aberto": sessao is not None,
             "sessao": None,
             "recebimentos": [],
@@ -290,6 +296,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             threading.Thread(target=trabalho, daemon=True).start()
 
     def _imprimir_cozinha(pedido: dict) -> None:
+        if not pedido["vai_cozinha"]:
+            raise ErroNegocio("Esse pedido não tem nada para a cozinha preparar.")
         banco.registrar_impressao(pedido["id"], "imprimindo")
         _imprimir("cozinha", lambda loja, col, cod: impressora.cupom_cozinha(pedido, loja, col, cod),
                   lambda r: banco.registrar_impressao(pedido["id"], r))
@@ -297,21 +305,26 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     # --- Pedidos ---------------------------------------------------------------
 
     @app.post("/api/pedidos")
-    @exigir("pedidos")
+    @exigir("pedidos", "garcom")
     def api_criar_pedido():
         dados = request.get_json(silent=True) or {}
-        pedido = banco.criar_pedido(dados.get("itens"), origem="caixa", mesa=dados.get("mesa", ""),
+        origem = "garcom" if dados.get("origem") == "garcom" or not pode("pedidos") else "caixa"
+        if origem == "garcom" and not pode("garcom"):
+            return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
+        if origem == "garcom" and not str(dados.get("mesa") or "").strip():
+            raise ErroNegocio("Escolha a mesa do pedido.")
+        pedido = banco.criar_pedido(dados.get("itens"), origem=origem, mesa=dados.get("mesa", ""),
                                     cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator())
-        if banco.config()["impressora_cozinha_ativa"]:
+        if banco.config()["impressora_cozinha_ativa"] and pedido["vai_cozinha"]:
             _imprimir_cozinha(pedido)
         return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"])})
 
     @app.post("/api/pedidos/<int:pedido_id>/status")
-    @exigir("pedidos", "cozinha", "cancelar")
+    @exigir("pedidos", "garcom", "cozinha", "cancelar")
     def api_status(pedido_id):
         dados = request.get_json(silent=True) or {}
         status = dados.get("status")
-        necessario = {"cancelado": ("cancelar",), "entregue": ("pedidos",)}.get(status, ("cozinha", "pedidos"))
+        necessario = {"cancelado": ("cancelar",), "entregue": ("pedidos", "garcom")}.get(status, ("cozinha", "pedidos"))
         if not pode(*necessario):
             return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
         return jsonify({"ok": True, "pedido": banco.mudar_status(pedido_id, status, por=ator(), motivo=dados.get("motivo", ""))})
@@ -332,13 +345,13 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         return jsonify({"ok": True})
 
     @app.post("/api/garcom/<int:chamado_id>/atender")
-    @exigir("pedidos")
+    @exigir("pedidos", "garcom")
     def api_atender_chamado(chamado_id):
         banco.atender_chamado(chamado_id, por=ator())
         return jsonify({"ok": True})
 
     @app.post("/api/contas/imprimir")
-    @exigir("pedidos", "receber")
+    @exigir("pedidos", "receber", "garcom")
     def api_imprimir_conta():
         dados = request.get_json(silent=True) or {}
         pedidos = [banco.obter_pedido(int(i)) for i in dados.get("pedido_ids") or []]
@@ -401,7 +414,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         return jsonify({"ok": True, "recebimento": rec})
 
     @app.post("/api/recebimentos/<int:rid>/estornar")
-    @exigir("cancelar")
+    @exigir("estornar")
     def api_estornar(rid):
         banco.estornar_recebimento(rid, (request.get_json(silent=True) or {}).get("motivo", ""), ator())
         return jsonify({"ok": True})
@@ -444,7 +457,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""),
             por={"id": None, "nome": f"Cliente (mesa {mesa['numero']})"},
         )
-        if cfg["impressora_cozinha_ativa"]:
+        if cfg["impressora_cozinha_ativa"] and pedido["vai_cozinha"]:
             _imprimir_cozinha(pedido)
         return jsonify({"ok": True, "pedido": _pedido_para_cliente(pedido)})
 
@@ -496,6 +509,16 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @exigir("cardapio")
     def api_atualizar_produto(produto_id):
         return jsonify({"ok": True, "produto": banco.atualizar_produto(produto_id, request.get_json(silent=True) or {}, por=ator())})
+
+    @app.post("/api/produtos/categoria-cozinha")
+    @exigir("cardapio")
+    def api_categoria_cozinha():
+        dados = request.get_json(silent=True) or {}
+        categoria = str(dados.get("categoria") or "")
+        if not categoria:
+            raise ErroNegocio("Categoria inválida.")
+        alterados = banco.definir_cozinha_categoria(categoria, bool(dados.get("vai_cozinha")), por=ator())
+        return jsonify({"ok": True, "alterados": alterados})
 
     @app.delete("/api/produtos/<int:produto_id>")
     @exigir("cardapio")

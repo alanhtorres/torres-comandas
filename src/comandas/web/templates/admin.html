@@ -12,7 +12,7 @@
     <h1>⚙️ Administração</h1>
     <span class="espaco"></span>
     <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
-    <nav><a href="/">Início</a>{% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}<a href="/sair">Sair</a></nav>
+    <nav><a href="/">Início</a>{% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}{% if pode('garcom') %}<a href="/garcom">Garçom</a>{% endif %}<a href="/sair">Sair</a></nav>
   </header>
   <nav class="abas">
     {% if pode('relatorios') %}<a href="#relatorios" data-aba="relatorios">Relatórios do caixa</a>{% endif %}
@@ -54,6 +54,9 @@
           <div class="largo"><label for="produto-descricao">Descrição (aparece no cardápio do QR code)</label><input id="produto-descricao" maxlength="200"></div>
           <div><label for="produto-foto">Foto (opcional)</label><input id="produto-foto" type="file" accept="image/*"></div>
           <div><label>&nbsp;</label><label class="inline"><input id="produto-ativo" type="checkbox" checked> Disponível para venda</label></div>
+          <div class="largo"><label class="inline"><input id="produto-cozinha" type="checkbox" checked> Vai para a cozinha (precisa de preparo)</label>
+            <p class="dica">Desmarque para itens que já estão prontos — bebida em lata, chips, sobremesa embalada. Eles aparecem só
+              no caixa e no garçom, não na tela nem na impressora da cozinha.</p></div>
         </div>
         <div class="acoes-form">
           <button type="button" id="cancelar-edicao" class="discreto" hidden>Cancelar edição</button>

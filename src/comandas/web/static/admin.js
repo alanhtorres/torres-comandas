@@ -27,6 +27,7 @@
       $("form-produto").reset();
       $("produto-id").value = "";
       $("produto-ativo").checked = true;
+      $("produto-cozinha").checked = true;
       $("titulo-form-produto").textContent = "Novo produto";
       $("cancelar-edicao").hidden = true;
     }
@@ -38,6 +39,7 @@
       $("produto-preco").value = (p.preco_centavos / 100).toFixed(2).replace(".", ",");
       $("produto-descricao").value = p.descricao;
       $("produto-ativo").checked = p.ativo;
+      $("produto-cozinha").checked = p.vai_cozinha;
       $("produto-foto").value = "";
       $("titulo-form-produto").textContent = "Editando: " + p.nome;
       $("cancelar-edicao").hidden = false;
@@ -64,6 +66,7 @@
         preco_centavos: centavos,
         descricao: $("produto-descricao").value,
         ativo: $("produto-ativo").checked,
+        vai_cozinha: $("produto-cozinha").checked,
       };
       try {
         const id = $("produto-id").value;
@@ -89,7 +92,19 @@
       }
       const linhas = [];
       for (const cat of categorias) {
-        linhas.push(el("tr", { class: "grupo-categoria" }, el("td", { colspan: 5 }, cat)));
+        const daCategoria = produtos.filter((x) => x.categoria === cat);
+        const todosCozinha = daCategoria.every((x) => x.vai_cozinha);
+        linhas.push(el("tr", { class: "grupo-categoria" }, el("td", { colspan: 4 }, cat),
+          el("td", { class: "acoes" }, el("button", {
+            title: "Aplica a todos os produtos desta categoria",
+            onclick: async () => {
+              try {
+                await api("POST", "/api/produtos/categoria-cozinha", { categoria: cat, vai_cozinha: !todosCozinha });
+                aviso(todosCozinha ? `Nenhum produto de "${cat}" vai mais para a cozinha` : `Todos os produtos de "${cat}" vão para a cozinha`, "ok");
+                carregarProdutos();
+              } catch (e) { aviso(e.message, "erro"); }
+            },
+          }, todosCozinha ? "Tirar a categoria da cozinha" : "Pôr a categoria na cozinha"))));
         for (const p of produtos.filter((x) => x.categoria === cat)) {
           const inputFoto = el("input", { type: "file", accept: "image/*", hidden: true, onchange: async (e) => {
             try { await enviarFoto(p.id, e.target.files[0]); aviso("Foto atualizada", "ok"); carregarProdutos(); }
@@ -99,13 +114,17 @@
             el("td", {}, p.foto ? el("img", { class: "miniatura", src: "/foto/" + p.foto, alt: "" }) : el("div", { class: "sem-foto" }, "📷")),
             el("td", {}, el("strong", {}, p.nome), p.descricao ? el("div", { class: "dica" }, p.descricao) : null),
             el("td", {}, moeda(p.preco_centavos)),
-            el("td", {}, p.ativo ? "" : el("span", { class: "etiqueta" }, "indisponível")),
+            el("td", {}, p.ativo ? null : el("span", { class: "etiqueta" }, "indisponível"), " ",
+              p.vai_cozinha ? el("span", { class: "etiqueta preparando" }, "👨‍🍳 cozinha") : el("span", { class: "etiqueta" }, "só caixa")),
             el("td", { class: "acoes" },
               inputFoto,
               el("button", { title: "Trocar foto", onclick: () => inputFoto.click() }, "📷"),
               el("button", { title: p.ativo ? "Marcar como indisponível" : "Marcar como disponível", onclick: async () => {
                 await api("PUT", "/api/produtos/" + p.id, { ativo: !p.ativo }); carregarProdutos();
               } }, p.ativo ? "Pausar" : "Ativar"),
+              el("button", { title: p.vai_cozinha ? "Marcar como pronto (não vai para a cozinha)" : "Marcar como item de preparo (vai para a cozinha)",
+                onclick: async () => { await api("PUT", "/api/produtos/" + p.id, { vai_cozinha: !p.vai_cozinha }); carregarProdutos(); } },
+                p.vai_cozinha ? "Tirar da cozinha" : "Pôr na cozinha"),
               el("button", { onclick: () => editarProduto(p) }, "Editar"),
               el("button", { class: "perigo", onclick: async () => {
                 if (!confirm("Excluir " + p.nome + "?")) return;

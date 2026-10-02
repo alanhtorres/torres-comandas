@@ -435,3 +435,57 @@ def test_mover_midia(banco):
     assert [m["arquivo"] for m in banco.listar_midias()] == ["b.jpg", "a.jpg"]
     banco.atualizar_midia(a["id"], {"ativo": False, "duracao": "12"})
     assert [m["arquivo"] for m in banco.listar_midias(somente_ativas=True)] == ["b.jpg"]
+
+
+# --- Itens que não vão para a cozinha -----------------------------------------
+
+def test_pedido_so_com_itens_prontos_nao_passa_pela_cozinha(banco, ana):
+    lata = _produto(banco, "Refrigerante lata", 600, vai_cozinha=False)
+    burger = _produto(banco)
+    so_bebida = _pedido(banco, lata, qtd=2, mesa="3", por=ana)
+    assert so_bebida["status"] == "pronto" and so_bebida["pronto_em"] and so_bebida["vai_cozinha"] is False
+    misto = banco.criar_pedido([{"produto_id": lata["id"]}, {"produto_id": burger["id"]}])
+    assert misto["status"] == "novo" and misto["vai_cozinha"] is True
+    assert [i["vai_cozinha"] for i in misto["itens"]] == [False, True]
+    # mudar o produto depois não altera pedidos já feitos
+    banco.atualizar_produto(lata["id"], {"vai_cozinha": True}, por=ana)
+    assert banco.obter_pedido(misto["id"])["itens"][0]["vai_cozinha"] is False
+    detalhes = banco.listar_auditoria("2000-01-01", "2100-01-01", busca="sem preparo")
+    assert detalhes and "Nº 1" in detalhes[0]["detalhes"]
+
+
+def test_marcar_categoria_inteira(banco, ana):
+    _produto(banco, "Coca", 600, categoria="Bebidas")
+    _produto(banco, "Suco", 900, categoria="Bebidas")
+    _produto(banco, "X-Burger")
+    assert banco.definir_cozinha_categoria("Bebidas", False, por=ana) == 2
+    assert {p["nome"]: p["vai_cozinha"] for p in banco.listar_produtos()} == {"Coca": False, "Suco": False, "X-Burger": True}
+
+
+def test_origem_garcom_e_invalida(banco):
+    p = _produto(banco)
+    assert banco.criar_pedido([{"produto_id": p["id"]}], origem="garcom", mesa="2")["origem"] == "garcom"
+    with pytest.raises(ErroNegocio):
+        banco.criar_pedido([{"produto_id": p["id"]}], origem="hacker")
+
+
+def test_admin_antigo_ganha_as_permissoes_novas(tmp_path):
+    """Quem administrava usuários na 2.0.0 recebe 'garcom' e 'estornar'
+    (antes o estorno vinha junto com 'cancelar'); os outros não mudam."""
+    import json
+    caminho = tmp_path / "v200.db"
+    banco = Banco(caminho)
+    with banco.lock:
+        banco.conn.execute("DELETE FROM config WHERE chave = 'versao_permissoes'")
+        for login, perms in (("dono", ["pedidos", "cancelar", "usuarios"]), ("caixa", ["pedidos", "cancelar"])):
+            banco.conn.execute("INSERT INTO usuarios (nome, login, senha_hash, permissoes, criado_em) VALUES (?, ?, 'x', ?, 0)",
+                               (login, login, json.dumps(perms)))
+        banco.conn.commit()
+    reaberto = Banco(caminho)
+    perms = {u["login"]: set(u["permissoes"]) for u in reaberto.listar_usuarios()}
+    assert {"garcom", "estornar"} <= perms["dono"]
+    assert perms["caixa"] == {"pedidos", "cancelar"}
+    # roda uma vez só: se o admin tirar depois, não volta sozinho
+    dono = [u for u in reaberto.listar_usuarios() if u["login"] == "dono"][0]
+    reaberto.atualizar_usuario(dono["id"], {"permissoes": ["usuarios"]})
+    assert Banco(caminho).obter_usuario(dono["id"])["permissoes"] == ["usuarios"]

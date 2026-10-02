@@ -15,7 +15,8 @@ celular do cliente) são apenas um navegador apontando para ele na rede local.
 |---|---|---|
 | Início | `/` | Qualquer usuário logado (mostra só os atalhos que ele pode usar) |
 | Caixa | `/caixa` | Lançar pedidos, chamar no painel, contas a receber, pagamentos, abrir/fechar caixa |
-| Cozinha | `/cozinha` | Pedidos a preparar, com tempo de espera (amarelo > 10 min, vermelho > 20 min) |
+| Garçom | `/garcom` | Celular/tablet: pedidos na mesa, alerta quando o cliente chama pelo QR code, pedidos prontos para entregar, contas das mesas |
+| Cozinha | `/cozinha` | Só o que precisa de preparo, com tempo de espera (amarelo > 10 min, vermelho > 20 min) |
 | Painel (TV) | `/painel` | Público. Pedidos prontos + histórico na lateral; fotos e vídeos dos produtos no resto da tela |
 | Cliente (QR code) | `/m/<código-da-mesa>` | Público. Cardápio no celular, pedido direto para a cozinha, chamar garçom, pedir a conta |
 | Administração | `/admin` | Relatórios, cardápio, mesas e QR codes, mídias do painel, usuários e permissões, histórico, configurações |
@@ -29,19 +30,42 @@ uma, o que ela pode acessar:
 | Permissão | Libera |
 |---|---|
 | Caixa: lançar e acompanhar pedidos | Tela do caixa, lançar pedidos, chamar no painel, atender garçom |
+| Página do garçom | Pedidos na mesa pelo celular/tablet, alertas do QR code, marcar entregue |
 | Tela da cozinha | Tela da cozinha (iniciar preparo / pronto) |
 | Receber pagamentos | Receber contas (dinheiro, Pix, cartões, vale), com desconto, taxa de serviço e troco |
 | Abrir e fechar o caixa | Abertura com fundo de troco, sangria, suprimento e fechamento |
-| Cancelar pedidos e estornar pagamentos | Cancelar (com motivo obrigatório) e estornar recebimentos |
+| Cancelar pedidos | Cancelar pedido ainda não pago (com motivo obrigatório) |
+| Estornar pagamentos | Desfazer um pagamento já recebido (aba Recebidos). Separada de propósito: por padrão só o administrador tem; ele decide se algum caixa também pode |
 | Cardápio / Mesas e QR codes / Fotos e vídeos do painel / Configurações | As abas correspondentes da administração |
 | Relatórios financeiros | Relatórios de vendas e de caixas, planilha para o Excel |
 | Histórico de ações | Ver tudo o que cada usuário fez |
 | Usuários e permissões | Criar/editar usuários e o que cada um pode fazer |
 
-Há modelos prontos (Administrador, Caixa, Garçom, Cozinha) que marcam as permissões
+Há modelos prontos (Administrador, Caixa, Garçom, Cozinha — o modelo Caixa não inclui estorno) que marcam as permissões
 mais comuns; depois é só ajustar. Tirar uma permissão ou desativar um usuário vale
 **na hora**, mesmo que ele esteja logado. O sistema não deixa ficar sem nenhum
 usuário capaz de administrar usuários.
+
+## Página do garçom
+
+Feita para celular ou tablet. O garçom escolhe a mesa, toca nos produtos (com
+observação por item, ex.: "sem cebola") e envia: o pedido vai para a cozinha e
+para o caixa com o nome dele. Quando um cliente aperta **Chamar garçom** ou
+**Pedir a conta** no QR code da mesa, aparece um alerta no topo da tela com som
+e vibração (toque uma vez na tela para o navegador liberar o som). A aba
+**Entregar** lista o que ficou pronto para levar às mesas e a aba **Mesas** mostra
+as contas abertas (com botão para imprimir a conferência, se houver impressora
+do caixa).
+
+## O que vai para a cozinha
+
+Cada produto tem a opção **"Vai para a cozinha (precisa de preparo)"**. Bebidas em
+lata, chips, sobremesas embaladas etc. podem ficar desmarcados: eles aparecem no
+caixa e no garçom, mas não na tela nem na impressora da cozinha. Dá para marcar
+uma categoria inteira de uma vez (ex.: "Tirar a categoria da cozinha" em Bebidas)
+e depois ajustar produto por produto (ex.: o suco natural volta para a cozinha).
+Pedido só com itens prontos já nasce "pronto"; pedido misto mostra na cozinha
+só o que precisa ser preparado.
 
 ## Histórico (auditoria)
 
