@@ -489,3 +489,168 @@ def test_admin_antigo_ganha_as_permissoes_novas(tmp_path):
     dono = [u for u in reaberto.listar_usuarios() if u["login"] == "dono"][0]
     reaberto.atualizar_usuario(dono["id"], {"permissoes": ["usuarios"]})
     assert Banco(caminho).obter_usuario(dono["id"])["permissoes"] == ["usuarios"]
+
+
+# --- Clientes, comandas, aniversários e campanhas ---------------------------------
+
+from datetime import datetime as _dt
+
+from comandas.banco import normalizar_telefone, proximo_aniversario, validar_cpf
+
+
+def test_validacoes_de_telefone_cpf():
+    assert normalizar_telefone("(11) 98765-4321") == "11987654321"
+    assert normalizar_telefone("+55 11 3333-4444") == "1133334444"
+    assert normalizar_telefone("98765-4321", "21") == "21987654321"
+    assert normalizar_telefone("011 98765-4321") == "11987654321"       # prefixo 0 de operadora
+    for ruim in ("98765-4321", "123", "(01) 98765-4321", "(11) 8765-43210", "(11) 9876-5432", "(10) 98765-4321"):
+        with pytest.raises(ErroNegocio, match="Telefone"):
+            normalizar_telefone(ruim)
+    assert validar_cpf("529.982.247-25") == "52998224725"
+    assert validar_cpf("") is None
+    for ruim in ("529.982.247-24", "111.111.111-11", "123"):
+        with pytest.raises(ErroNegocio, match="CPF"):
+            validar_cpf(ruim)
+
+
+def test_aniversario_29_de_fevereiro():
+    data, idade = proximo_aniversario("2000-02-29", _dt(2027, 2, 1))
+    assert data == _dt(2027, 2, 28) and idade == 27
+    data, _ = proximo_aniversario("1990-03-10", _dt(2026, 3, 11))
+    assert data == _dt(2027, 3, 10)
+
+
+def _cliente(banco, nome="Maria Silva", telefone="11987654321", **extra):
+    return banco.criar_cliente({"nome": nome, "telefone": telefone, **extra})
+
+
+def test_cadastro_exige_nome_e_telefone_e_nao_duplica(banco, ana):
+    with pytest.raises(ErroNegocio, match="nome"):
+        banco.criar_cliente({"telefone": "11987654321"}, por=ana)
+    with pytest.raises(ErroNegocio, match="Telefone"):
+        banco.criar_cliente({"nome": "Maria"}, por=ana)
+    maria = _cliente(banco, cpf="529.982.247-25", nascimento="10/03/1990", aceita_mensagens=True)
+    assert maria["nascimento"] == "1990-03-10" and maria["consentimento_em"] and maria["cpf"] == "52998224725"
+    with pytest.raises(ErroNegocio, match="esse telefone: Maria Silva"):
+        _cliente(banco, "Outra", "(11) 98765-4321")
+    with pytest.raises(ErroNegocio, match="esse CPF"):
+        _cliente(banco, "Outra", "11911112222", cpf="52998224725")
+    with pytest.raises(ErroNegocio, match="nascimento"):
+        _cliente(banco, "Futuro", "11911112222", nascimento="2999-01-01")
+
+
+def test_busca_e_privacidade_do_cpf(banco):
+    _cliente(banco, cpf="52998224725")
+    assert banco.buscar_clientes("9876")[0]["nome"] == "Maria Silva"
+    assert banco.buscar_clientes("maria")[0]["cpf"] is None          # entrada não vê CPF
+    assert banco.buscar_clientes("529982", com_cpf=True)[0]["cpf_formatado"] == "529.982.247-25"
+
+
+def test_comanda_completa(banco, ana, relogio):
+    maria = _cliente(banco)
+    p = _produto(banco, preco=1500)
+    k = banco.abrir_comanda(maria["id"], por=ana)
+    assert k["numero"] == "1" and k["aberta"]
+    with pytest.raises(ErroNegocio, match="já está com a comanda 1"):
+        banco.abrir_comanda(maria["id"], por=ana)
+    joao = _cliente(banco, "João", "11911112222")
+    with pytest.raises(ErroNegocio, match="já está em uso"):
+        banco.abrir_comanda(joao["id"], numero="1", por=ana)
+    assert banco.abrir_comanda(joao["id"], por=ana)["numero"] == "2"
+
+    pedido = banco.criar_pedido([{"produto_id": p["id"], "quantidade": 2}], comanda_id=k["id"], por=ana)
+    assert pedido["cliente"] == "Maria" and pedido["comanda_numero"] == "1"
+    assert any(c["titulo"] == "Comanda 1 · Maria Silva" and c["total"] == 3000 for c in banco.contas_abertas())
+    with pytest.raises(ErroNegocio, match="a receber"):
+        banco.fechar_comanda(k["id"], por=ana)
+
+    banco.abrir_caixa(0, ana)
+    rec = banco.receber([pedido["id"]], [{"forma": "pix", "valor": 3000}], ana)
+    assert "Comanda 1" in rec["descricao"]
+    assert banco.obter_comanda(k["id"])["aberta"] is False          # pagou: fecha sozinha
+    with pytest.raises(ErroNegocio, match="já foi fechada"):
+        banco.criar_pedido([{"produto_id": p["id"]}], comanda_id=k["id"])
+    # o cartão nº 1 fica livre para o próximo cliente
+    ze = _cliente(banco, "Zé", "11933334444")
+    assert banco.abrir_comanda(ze["id"], por=ana)["numero"] == "1"
+
+    banco.estornar_recebimento(rec["id"], "erro", ana)
+    assert banco.obter_comanda(k["id"])["aberta"] is True           # estorno reabre
+
+    # quem saiu sem consumir
+    banco.fechar_comanda(banco.listar_comandas()[1]["id"], por=ana)
+    acoes = [a["acao"] for a in banco.listar_auditoria("2000-01-01", "2100-01-01")]
+    assert "Abriu comanda" in acoes and "Fechou comanda" in acoes and "Cadastrou cliente" in acoes
+
+
+def test_listagem_de_clientes_com_visitas_e_gasto(banco, ana):
+    maria = _cliente(banco)
+    p = _produto(banco, preco=2000)
+    banco.abrir_caixa(0, ana)
+    for _ in range(2):
+        k = banco.abrir_comanda(maria["id"], por=ana)
+        pedido = banco.criar_pedido([{"produto_id": p["id"]}], comanda_id=k["id"], por=ana)
+        banco.receber([pedido["id"]], [{"forma": "pix", "valor": 2000}], ana)
+    c = banco.listar_clientes()[0]
+    assert c["visitas"] == 2 and c["total_gasto"] == 4000 and c["ultima_visita"]
+    planilha = banco.clientes_csv()
+    assert planilha.startswith("﻿Nome;") and "Maria Silva" in planilha and "40,00" in planilha
+
+
+def test_aniversariantes(banco, relogio):
+    hoje = _dt.fromtimestamp(relogio.ts)
+    from datetime import timedelta as _td
+    em3 = hoje + _td(days=3)
+    _cliente(banco, "Hoje", "11911110001", nascimento=hoje.replace(year=1990).strftime("%Y-%m-%d"), aceita_mensagens=True)
+    _cliente(banco, "Em três dias", "11911110002", nascimento=em3.replace(year=1985).strftime("%Y-%m-%d"))
+    _cliente(banco, "Longe", "11911110003", nascimento=(hoje + _td(days=40)).replace(year=1980).strftime("%Y-%m-%d"))
+    lista = banco.aniversariantes(7)
+    assert [(c["nome"], c["faltam_dias"]) for c in lista] == [("Hoje", 0), ("Em três dias", 3)]
+    assert lista[0]["idade"] == hoje.year - 1990
+    assert [c["nome"] for c in banco.aniversariantes(0)] == ["Hoje"]
+    assert banco.obter_cliente(lista[0]["id"])["aniversario_hoje"] is True
+
+
+def test_campanha_so_para_quem_autorizou(banco, ana):
+    sim = _cliente(banco, "Autorizou", "11911110001", aceita_mensagens=True)
+    _cliente(banco, "Não autorizou", "11911110002")
+    publico = banco.publico_campanha("todos", "Promo sexta")
+    assert [c["nome"] for c in publico] == ["Autorizou"] and publico[0]["enviado_em"] is None
+    banco.registrar_mensagem(sim["id"], "Promo sexta", "Olá!", por=ana)
+    assert banco.publico_campanha("todos", "Promo sexta")[0]["enviado_em"]
+    assert banco.publico_campanha("todos", "Outra")[0]["enviado_em"] is None
+    nao = banco.listar_clientes("Não")[0]
+    with pytest.raises(ErroNegocio, match="não autorizou"):
+        banco.registrar_mensagem(nao["id"], "Promo sexta", "Olá!", por=ana)
+    with pytest.raises(ErroNegocio, match="nome para a campanha"):
+        banco.publico_campanha("todos", "")
+    # desautorizar tira da lista
+    banco.atualizar_cliente(sim["id"], {"aceita_mensagens": False}, por=ana)
+    assert banco.publico_campanha("todos", "Promo sexta") == []
+
+
+def test_apagar_dados_do_cliente_lgpd(banco, ana):
+    maria = _cliente(banco, cpf="52998224725", nascimento="1990-03-10")
+    k = banco.abrir_comanda(maria["id"], por=ana)
+    with pytest.raises(ErroNegocio, match="comanda aberta"):
+        banco.remover_dados_cliente(maria["id"], por=ana)
+    banco.fechar_comanda(k["id"], por=ana)
+    banco.remover_dados_cliente(maria["id"], por=ana)
+    apagado = banco.obter_cliente(maria["id"])
+    assert apagado["nome"] == "Cliente removido" and apagado["cpf"] is None and apagado["nascimento"] is None
+    assert banco.listar_clientes() == [] and banco.buscar_clientes("maria") == []
+    assert banco.obter_comanda(k["id"])["cliente_nome"] == "Cliente removido"
+    # o mesmo telefone pode ser cadastrado de novo
+    assert _cliente(banco)["nome"] == "Maria Silva"
+
+
+def test_permissoes_novas_para_admin_antigo(tmp_path):
+    import json
+    caminho = tmp_path / "v210.db"
+    banco = Banco(caminho)
+    with banco.lock:
+        banco.conn.execute("UPDATE config SET valor = '2' WHERE chave = 'versao_permissoes'")
+        banco.conn.execute("INSERT INTO usuarios (nome, login, senha_hash, permissoes, criado_em) VALUES ('Dono', 'dono', 'x', ?, 0)",
+                           (json.dumps(["usuarios", "garcom", "estornar"]),))
+        banco.conn.commit()
+    assert {"comandas", "clientes"} <= set(Banco(caminho).listar_usuarios()[0]["permissoes"])

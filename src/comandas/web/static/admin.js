@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { api, moeda, el, aviso, dialogo, dataHora, hojeISO } = window.C;
+  const { api, moeda, el, aviso, dialogo, dataHora, hojeISO, formCliente, preencherMensagem, abrirWhatsapp } = window.C;
   const $ = (id) => document.getElementById(id);
 
   // --- Abas -------------------------------------------------------------------
@@ -290,6 +290,136 @@
     }));
   }
 
+  // --- Clientes e WhatsApp ------------------------------------------------
+
+  if ($("aba-clientes")) {
+    const dataBR = (iso) => (iso ? iso.split("-").reverse().join("/") : "");
+
+    async function enviarWhatsapp(cliente, texto, campanha, modo) {
+      abrirWhatsapp(cliente.telefone, texto, modo);
+      try {
+        await api("POST", "/api/mensagens", { cliente_id: cliente.id, campanha, texto });
+      } catch (e) { aviso(e.message, "erro"); }
+    }
+
+    async function carregarAniversarios() {
+      const r = await api("GET", "/api/aniversariantes?dias=7");
+      const campanha = "aniversario-" + new Date().getFullYear();
+      $("lista-aniversarios").replaceChildren(r.aniversariantes.length
+        ? el("table", { class: "tabela" }, el("tbody", {}, r.aniversariantes.map((c) => el("tr", { class: c.parabens_enviado ? "enviado" : "" },
+          el("td", {}, el("strong", {}, c.faltam_dias === 0 ? "🎂 Hoje" : c.faltam_dias === 1 ? "Amanhã" : dataBR(c.data_aniversario))),
+          el("td", {}, c.nome, el("div", { class: "dica" }, `faz ${c.idade} anos · ${c.telefone_formatado}`)),
+          el("td", { class: "acoes" }, c.parabens_enviado ? el("span", { class: "etiqueta pronto" }, "✓ parabéns enviado")
+            : !c.aceita_mensagens ? el("span", { class: "dica" }, "não autorizou mensagens")
+              : el("button", { class: "botao-zap", onclick: async () => {
+                await enviarWhatsapp(c, preencherMensagem(r.mensagem, c, r.loja), campanha, r.whatsapp_abrir_em);
+                carregarAniversarios();
+              } }, "Enviar parabéns no WhatsApp"))))))
+        : el("div", { class: "vazio" }, "Nenhum aniversariante nos próximos 7 dias."));
+    }
+
+    // Campanha
+    let publicosCarregados = false;
+    async function prepararCampanha() {
+      if (publicosCarregados) return;
+      const { publicos } = await api("GET", "/api/campanhas/publicos");
+      $("camp-publico").replaceChildren(...Object.entries(publicos).map(([k, v]) => el("option", { value: k }, v)));
+      publicosCarregados = true;
+    }
+    function atualizarPrevia() {
+      const t = $("camp-texto").value;
+      $("camp-previa").textContent = t ? "Prévia: " + preencherMensagem(t, { nome: "Maria Silva" }, "seu estabelecimento") : "";
+    }
+    $("camp-texto").addEventListener("input", atualizarPrevia);
+
+    $("camp-montar").addEventListener("click", async () => {
+      const campanha = $("camp-nome").value.trim();
+      const texto = $("camp-texto").value.trim();
+      if (!texto) { aviso("Escreva a mensagem", "erro"); return; }
+      let r;
+      try {
+        r = await api("GET", `/api/campanhas/publico?publico=${$("camp-publico").value}&campanha=${encodeURIComponent(campanha)}`);
+      } catch (e) { aviso(e.message, "erro"); return; }
+      const lista = r.clientes;
+      const progresso = el("div", { class: "progresso-campanha" });
+      const atualizar = () => {
+        const enviados = lista.filter((c) => c.enviado_em).length;
+        progresso.textContent = `${enviados} de ${lista.length} enviados nesta campanha`;
+      };
+      atualizar();
+      $("camp-lista").replaceChildren(progresso, lista.length
+        ? el("table", { class: "tabela" }, el("tbody", {}, lista.map((c) => {
+          const linha = el("tr", { class: c.enviado_em ? "enviado" : "" });
+          const botao = el("button", { class: "botao-zap", onclick: async () => {
+            await enviarWhatsapp(c, preencherMensagem(texto, c, r.loja), campanha, r.whatsapp_abrir_em);
+            c.enviado_em = Date.now() / 1000;
+            linha.classList.add("enviado");
+            botao.textContent = "Enviar de novo";
+            atualizar();
+          } }, c.enviado_em ? "Enviar de novo" : "Abrir no WhatsApp");
+          linha.append(el("td", {}, el("strong", {}, c.nome), el("div", { class: "dica" }, c.telefone_formatado)),
+            el("td", {}, c.enviado_em ? "✓ enviado em " + dataHora(c.enviado_em) : ""),
+            el("td", { class: "acoes" }, botao));
+          return linha;
+        })))
+        : el("div", { class: "vazio" }, "Nenhum cliente desse público autorizou receber mensagens."));
+    });
+
+    // Lista de clientes
+    async function carregarClientes() {
+      const busca = $("busca-clientes").value.trim();
+      const { clientes } = await api("GET", "/api/clientes?busca=" + encodeURIComponent(busca));
+      $("n-clientes").textContent = clientes.length;
+      $("lista-clientes").replaceChildren(clientes.length
+        ? el("table", { class: "tabela" },
+          el("thead", {}, el("tr", {}, ["Cliente", "CPF", "Nascimento", "Mensagens", "Visitas", "Gasto", ""].map((t) => el("th", {}, t)))),
+          el("tbody", {}, clientes.map((c) => el("tr", {},
+            el("td", {}, el("strong", {}, c.nome), c.aniversario_hoje ? " 🎂" : "", el("div", { class: "dica" }, c.telefone_formatado)),
+            el("td", {}, c.cpf_formatado),
+            el("td", {}, dataBR(c.nascimento)),
+            el("td", {}, c.aceita_mensagens ? el("span", { class: "etiqueta pronto" }, "autorizou") : el("span", { class: "etiqueta" }, "não")),
+            el("td", {}, c.visitas, c.ultima_visita ? el("div", { class: "dica" }, "última: " + dataHora(c.ultima_visita).slice(0, 10)) : null),
+            el("td", {}, moeda(c.total_gasto)),
+            el("td", { class: "acoes" }, el("button", { onclick: () => dialogoCliente(c) }, "Editar"))))))
+        : el("div", { class: "vazio" }, busca ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado ainda."));
+    }
+    let tempoBusca = null;
+    $("busca-clientes").addEventListener("input", () => { clearTimeout(tempoBusca); tempoBusca = setTimeout(carregarClientes, 300); });
+
+    function dialogoCliente(c) {
+      const form = formCliente(c || {});
+      const remover = c ? el("button", { type: "button", class: "perigo", onclick: () => {
+        if (!confirm(`Apagar os dados pessoais de ${c.nome}? Use quando o cliente pedir (LGPD). As vendas continuam nos relatórios, mas sem nome, telefone, CPF e nascimento. Não dá para desfazer.`)) return;
+        api("DELETE", "/api/clientes/" + c.id).then(() => {
+          aviso("Dados do cliente apagados", "ok");
+          document.querySelector("dialog")?.close();
+          carregarClientes();
+        }).catch((e) => aviso(e.message, "erro"));
+      } }, "Apagar dados (LGPD)") : null;
+      dialogo({
+        titulo: c ? "Editar cliente" : "Novo cliente",
+        largo: true,
+        corpo: el("div", {}, form.elemento, c && c.consentimento_em ? el("p", { class: "dica" }, "Autorizou mensagens em " + dataHora(c.consentimento_em)) : null,
+          remover ? el("div", { style: "margin-top: 14px" }, remover) : null),
+        confirmar: "Salvar",
+        aoConfirmar: async () => {
+          if (c) await api("PUT", "/api/clientes/" + c.id, form.valores());
+          else await api("POST", "/api/clientes", form.valores());
+          aviso("Cliente salvo", "ok");
+          carregarClientes();
+          carregarAniversarios();
+        },
+      });
+    }
+    $("cliente-novo").addEventListener("click", () => dialogoCliente(null));
+
+    carregadores.clientes = () => {
+      prepararCampanha().catch((e) => aviso(e.message, "erro"));
+      carregarAniversarios().catch((e) => aviso(e.message, "erro"));
+      carregarClientes().catch((e) => aviso(e.message, "erro"));
+    };
+  }
+
   // --- Usuários e permissões -------------------------------------------------
 
   if ($("aba-usuarios")) {
@@ -310,8 +440,9 @@
           el("td", { class: "acoes" }, el("button", { onclick: () => dialogoUsuario(u) }, "Editar")))))));
     }
 
-    const CURTOS = { pedidos: "Caixa/pedidos", cozinha: "Cozinha", receber: "Receber", caixa: "Abrir/fechar caixa",
-      cancelar: "Cancelar/estornar", cardapio: "Cardápio", mesas: "Mesas", midias: "Mídias", configuracoes: "Configurações",
+    const CURTOS = { pedidos: "Caixa/pedidos", garcom: "Garçom", cozinha: "Cozinha", receber: "Receber", caixa: "Abrir/fechar caixa",
+      cancelar: "Cancelar pedidos", estornar: "Estornar", comandas: "Comandas", clientes: "Clientes/WhatsApp",
+      cardapio: "Cardápio", mesas: "Mesas", midias: "Mídias", configuracoes: "Configurações",
       relatorios: "Relatórios", historico: "Histórico", usuarios: "Usuários" };
     const rotuloCurto = (p) => CURTOS[p] || p;
 
@@ -393,7 +524,6 @@
 
     async function carregarRelatorio() {
       const de = $("rel-de").value, ate = $("rel-ate").value;
-      $("rel-csv").href = `/api/relatorios/vendas.csv?de=${de}&ate=${ate}`;
       let r, formas;
       try {
         ({ relatorio: r, formas } = await api("GET", `/api/relatorios?de=${de}&ate=${ate}`));
@@ -442,6 +572,54 @@
               el("td", {}, moeda(c.total_centavos)), el("td", {}, c.cancelado_por_nome, el("div", { class: "dica" }, c.motivo_cancelamento)))))))].filter(Boolean));
     }
     carregadores.relatorios = carregarRelatorio;
+
+    // Exportação (PDF ou Excel) com as seções que o administrador escolher.
+    const PADRAO = ["resumo", "formas", "produtos", "caixas", "movimentos", "estornos", "cancelamentos"];
+    let opcoesCarregadas = false;
+    $("abrir-exportar").addEventListener("click", async () => {
+      $("cartao-exportar").hidden = !$("cartao-exportar").hidden;
+      if (opcoesCarregadas) return;
+      try {
+        const { secoes } = await api("GET", "/api/relatorios/opcoes");
+        $("exp-secoes").replaceChildren(...Object.entries(secoes).map(([k, titulo]) =>
+          el("label", { class: "inline" }, el("input", { type: "checkbox", value: k, checked: PADRAO.includes(k) }), titulo)));
+        opcoesCarregadas = true;
+      } catch (e) { aviso(e.message, "erro"); }
+    });
+    const marcarTodas = (v) => $("exp-secoes").querySelectorAll("input").forEach((c) => (c.checked = v));
+    $("exp-todos").addEventListener("click", () => marcarTodas(true));
+    $("exp-nenhum").addEventListener("click", () => marcarTodas(false));
+
+    $("exp-gerar").addEventListener("click", async () => {
+      const secoes = [...$("exp-secoes").querySelectorAll("input:checked")].map((c) => c.value);
+      if (!secoes.length) { aviso("Marque pelo menos uma informação", "erro"); return; }
+      const formato = document.querySelector("input[name=exp-formato]:checked").value;
+      const params = new URLSearchParams({ de: $("rel-de").value, ate: $("rel-ate").value, formato, secoes: secoes.join(",") });
+      const botao = $("exp-gerar");
+      botao.disabled = true;
+      botao.textContent = "Gerando...";
+      try {
+        const res = await fetch("/api/relatorios/exportar?" + params, { cache: "no-store" });
+        if (!res.ok) {
+          let erro = "Erro " + res.status;
+          try { erro = (await res.json()).erro || erro; } catch (e) { /* não era JSON */ }
+          throw new Error(erro);
+        }
+        const nome = (res.headers.get("Content-Disposition") || "").match(/filename="?([^";]+)/);
+        const url = URL.createObjectURL(await res.blob());
+        const link = el("a", { href: url, download: nome ? nome[1] : "relatorio." + formato });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        aviso("Relatório gerado — confira a pasta de downloads", "ok");
+      } catch (e) {
+        aviso(e.message, "erro");
+      } finally {
+        botao.disabled = false;
+        botao.textContent = "Gerar e baixar";
+      }
+    });
   }
 
   // --- Histórico de ações ----------------------------------------------------

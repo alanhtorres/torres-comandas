@@ -1,0 +1,22 @@
+main { max-width: 1000px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+h2 { font-size: 1.05rem; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.aviso-desligado { border-color: var(--amarelo); color: #fde68a; }
+.linha-busca { display: flex; gap: 8px; }
+.linha-busca input { flex: 1; font-size: 1.1rem; }
+#resultados:not(:empty) { margin-top: 10px; }
+.resultado { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--borda); }
+.resultado .info { flex: 1; min-width: 0; }
+.resultado .info small { display: block; color: var(--texto-2); }
+.grade-comandas { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin-top: 10px; }
+.comanda { background: var(--fundo); border: 1px solid var(--borda); border-left: 5px solid var(--destaque); border-radius: 10px; padding: 10px 12px; }
+.comanda.pendente { border-left-color: var(--amarelo); }
+.comanda .numero { font-size: 1.8rem; font-weight: 800; line-height: 1; }
+.comanda .nome { font-weight: 600; margin-top: 4px; }
+.comanda small { display: block; color: var(--texto-2); }
+.comanda .valores { display: flex; justify-content: space-between; margin: 8px 0; font-size: 0.9rem; }
+.comanda button { width: 100%; padding: 8px; font-size: 0.85rem; }
+#aniversariantes { background: #500724; border: 1px solid #f472b6; border-radius: 12px; padding: 12px 14px; color: #fce7f3; }
+#aniversariantes h2 { margin-bottom: 6px; }
+#aniversariantes .lista { display: flex; flex-wrap: wrap; gap: 8px; }
+#aniversariantes .pessoa { background: rgba(255,255,255,.08); border-radius: 999px; padding: 6px 12px; display: flex; gap: 8px; align-items: center; }
+#aniversariantes .pessoa button { padding: 4px 10px; font-size: 0.8rem; background: #25d366; color: #052e16; }

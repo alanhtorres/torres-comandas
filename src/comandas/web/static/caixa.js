@@ -95,8 +95,19 @@
         el("span", {}, moeda(item.produto.preco_centavos * item.quantidade)))));
   }
 
+  function renderComandas() {
+    const sel = $("comanda");
+    $("linha-comanda").hidden = !estado.modo_comandas;
+    if (!estado.modo_comandas) return;
+    const atual = sel.value;
+    sel.replaceChildren(el("option", { value: "" }, estado.comandas.length ? "— sem comanda (balcão/mesa) —" : "Nenhuma comanda aberta"),
+      ...estado.comandas.map((k) => el("option", { value: k.id }, `${k.numero} · ${k.cliente_nome}`)));
+    if ([...sel.options].some((o) => o.value === atual)) sel.value = atual;
+  }
+
   function limparCarrinho() {
     carrinho = [];
+    $("comanda").value = "";
     $("cliente").value = $("mesa").value = $("obs").value = "";
     renderCarrinho();
   }
@@ -107,11 +118,12 @@
       const r = await api("POST", "/api/pedidos", {
         itens: carrinho.map((i) => ({ produto_id: i.produto.id, quantidade: i.quantidade, observacao: i.observacao })),
         cliente: $("cliente").value, mesa: $("mesa").value, observacao: $("obs").value,
+        comanda_id: $("comanda").value || null,
       });
       aviso("Pedido nº " + r.pedido.codigo + (r.pedido.vai_cozinha ? " enviado para a cozinha" : " registrado (sem preparo, já está pronto)"), "ok");
       limparCarrinho();
       monitor.forcar();
-      if (receberDepois) dialogoPagamento([r.pedido], "Pedido nº " + r.pedido.codigo);
+      if (receberDepois) dialogoPagamento([r.pedido], r.pedido.comanda_numero ? "Comanda " + r.pedido.comanda_numero : "Pedido nº " + r.pedido.codigo);
     } catch (err) {
       aviso(err.message, "erro");
       renderCarrinho();
@@ -168,6 +180,7 @@
     }
     const quem = [p.origem === "qrcode" ? el("span", { class: "etiqueta qrcode" }, "QR code") : null,
       p.origem === "garcom" ? el("span", { class: "etiqueta qrcode" }, "Garçom " + (p.usuario_nome || "")) : null,
+      p.comanda_numero ? el("span", { class: "etiqueta chamado" }, "Comanda " + p.comanda_numero) : null,
       p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean);
     return el("div", { class: "pedido " + p.status },
       el("div", { class: "cabeca" },
@@ -443,6 +456,7 @@
         renderCategorias();
         renderProdutos();
       }
+      renderComandas();
       renderCarrinho();
 
       const prontos = dados.pedidos.filter((p) => p.status === "pronto");

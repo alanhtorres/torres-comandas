@@ -18,8 +18,9 @@
       <a href="/">Início</a>
       {% if pode('cozinha') %}<a href="/cozinha">Cozinha</a>{% endif %}
       {% if pode('garcom') %}<a href="/garcom">Garçom</a>{% endif %}
+      {% if pode('comandas') %}<a href="/comandas">Comandas</a>{% endif %}
       <a href="/painel" target="_blank">Painel</a>
-      {% if pode('cardapio', 'mesas', 'midias', 'configuracoes', 'relatorios', 'historico', 'usuarios') %}<a href="/admin">Administração</a>{% endif %}
+      {% if pode('cardapio', 'mesas', 'midias', 'clientes', 'configuracoes', 'relatorios', 'historico', 'usuarios') %}<a href="/admin">Administração</a>{% endif %}
     </nav>
   </header>
 
@@ -51,6 +52,10 @@
       <div class="cartao carrinho">
         <h2>Itens <span id="qtd-itens" class="etiqueta">0</span></h2>
         <div id="itens-carrinho"></div>
+        <div id="linha-comanda" hidden>
+          <label for="comanda">Comanda do cliente</label>
+          <select id="comanda"></select>
+        </div>
         <div class="campos-duplos">
           <div><label for="cliente">Nome do cliente (aparece no painel)</label><input id="cliente" maxlength="60" placeholder="Opcional"></div>
           <div><label for="mesa">Mesa</label><input id="mesa" maxlength="40" placeholder="Opcional"></div>

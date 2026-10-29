@@ -161,3 +161,9 @@ dialog.dialogo h2 { margin: 0 0 12px; font-size: 1.2rem; }
 .linha-valor.destaque { font-weight: 700; font-size: 1.1rem; border-top: 1px solid var(--borda); margin-top: 4px; padding-top: 8px; }
 .positivo { color: #86efac; }
 .negativo { color: #fca5a5; }
+
+.form-cliente .campos-duplos { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+@media (max-width: 520px) { .form-cliente .campos-duplos { grid-template-columns: 1fr; } }
+.consentimento { margin-top: 14px; font-size: 0.9rem; align-items: flex-start; }
+.consentimento input { margin-top: 3px; }
+.etiqueta.aniversario { background: #831843; color: #fbcfe8; }

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Comandas — Torres Comandas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comandas.css') }}">
+</head>
+<body>
+  <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
+  <header class="topo">
+    <h1>🎟️ Comandas</h1>
+    <span class="espaco"></span>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
+    <nav>
+      <a href="/">Início</a>
+      {% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}
+      {% if pode('clientes') %}<a href="/admin#clientes">Clientes</a>{% endif %}
+      <a href="/sair">Sair</a>
+    </nav>
+  </header>
+
+  <main>
+    {% if not modo_ativo %}
+    <div class="cartao aviso-desligado">
+      <strong>O modo comanda está desligado.</strong>
+      Para usar, ative em Administração → Configurações → "Comandas e clientes".
+      {% if pode('configuracoes') %}<a href="/admin#config">Abrir configurações</a>{% endif %}
+    </div>
+    {% endif %}
+
+    <div id="aniversariantes" hidden></div>
+
+    <section class="cartao">
+      <h2>Abrir comanda</h2>
+      <div class="linha-busca">
+        <input id="busca" type="search" placeholder="Buscar cliente por nome, telefone ou CPF" autocomplete="off" {% if not modo_ativo %}disabled{% endif %}>
+        <button id="novo-cliente" class="primario" {% if not modo_ativo %}disabled{% endif %}>+ Cliente novo</button>
+      </div>
+      <div id="resultados"></div>
+    </section>
+
+    <section class="cartao">
+      <h2>Comandas abertas <span id="n-abertas" class="etiqueta">0</span></h2>
+      <input id="filtro" type="search" placeholder="Filtrar por número ou nome">
+      <div id="lista-comandas" class="grade-comandas"></div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='comandas.js') }}"></script>
+</body>
+</html>

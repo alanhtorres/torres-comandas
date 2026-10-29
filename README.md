@@ -15,6 +15,7 @@ celular do cliente) são apenas um navegador apontando para ele na rede local.
 |---|---|---|
 | Início | `/` | Qualquer usuário logado (mostra só os atalhos que ele pode usar) |
 | Caixa | `/caixa` | Lançar pedidos, chamar no painel, contas a receber, pagamentos, abrir/fechar caixa |
+| Comandas | `/comandas` | Entrada/recepção: cadastrar o cliente, abrir e fechar comandas, aniversariantes do dia |
 | Garçom | `/garcom` | Celular/tablet: pedidos na mesa, alerta quando o cliente chama pelo QR code, pedidos prontos para entregar, contas das mesas |
 | Cozinha | `/cozinha` | Só o que precisa de preparo, com tempo de espera (amarelo > 10 min, vermelho > 20 min) |
 | Painel (TV) | `/painel` | Público. Pedidos prontos + histórico na lateral; fotos e vídeos dos produtos no resto da tela |
@@ -35,6 +36,8 @@ uma, o que ela pode acessar:
 | Receber pagamentos | Receber contas (dinheiro, Pix, cartões, vale), com desconto, taxa de serviço e troco |
 | Abrir e fechar o caixa | Abertura com fundo de troco, sangria, suprimento e fechamento |
 | Cancelar pedidos | Cancelar pedido ainda não pago (com motivo obrigatório) |
+| Comandas | Abrir comanda e cadastrar cliente na entrada (vê nome e telefone, não vê CPF) |
+| Clientes e WhatsApp | Lista completa de clientes (com CPF e aniversário), exportar, editar, apagar dados e enviar mensagens de WhatsApp |
 | Estornar pagamentos | Desfazer um pagamento já recebido (aba Recebidos). Separada de propósito: por padrão só o administrador tem; ele decide se algum caixa também pode |
 | Cardápio / Mesas e QR codes / Fotos e vídeos do painel / Configurações | As abas correspondentes da administração |
 | Relatórios financeiros | Relatórios de vendas e de caixas, planilha para o Excel |
@@ -56,6 +59,46 @@ e vibração (toque uma vez na tela para o navegador liberar o som). A aba
 **Entregar** lista o que ficou pronto para levar às mesas e a aba **Mesas** mostra
 as contas abertas (com botão para imprimir a conferência, se houver impressora
 do caixa).
+
+## Comandas com cadastro do cliente
+
+Modo opcional (Administração → Configurações → "Comandas e clientes"). Todo cliente
+que entra é cadastrado — **nome e telefone obrigatórios**, CPF e data de nascimento
+opcionais — e recebe uma comanda (o número do cartão físico ou o próximo livre).
+Na próxima visita basta buscar pelo nome, telefone ou CPF.
+
+- O caixa e o garçom lançam os pedidos **na comanda** do cliente; a conta aparece em
+  "A receber" como "Comanda 12 · Fulano".
+- Quando a comanda é paga ela **fecha sozinha** e o número fica livre para outro cliente
+  (se o pagamento for estornado, ela reabre). Quem sai sem consumir tem a comanda
+  fechada na tela de Comandas.
+- Telefone e CPF são conferidos (DDD, celular com 9, dígitos do CPF) e não se repetem
+  entre clientes.
+
+## Clientes, aniversários e WhatsApp
+
+Em **Administração → Clientes e WhatsApp**:
+- **Aniversariantes** de hoje e dos próximos 7 dias, com botão "Enviar parabéns no
+  WhatsApp" (a mensagem é configurável). Os aniversariantes do dia também aparecem
+  na tela de Comandas, e o sistema avisa quando a comanda é aberta para quem está de
+  aniversário.
+- **Campanhas**: escreva a mensagem (use `{nome}` e `{loja}`), escolha o público
+  (todos, aniversariantes do mês/semana, clientes que não vêm há 30 dias, novos) e
+  clique em "Abrir no WhatsApp" em cada cliente — a conversa abre com o texto pronto,
+  é só apertar enviar. O sistema marca quem já recebeu cada campanha.
+- Lista de clientes com visitas, última visita e quanto gastou; planilha para o Excel.
+
+**Como o WhatsApp é aberto** (Configurações): WhatsApp Web no navegador do PC, o
+aplicativo WhatsApp instalado no PC, ou link wa.me (celular/tablet). Não usa robô nem
+API paga: quem envia é a pessoa, pelo WhatsApp da loja — isso evita o bloqueio do
+número, que acontece com programas de envio automático em massa. Precisa de internet
+só no momento do envio; o resto do sistema continua funcionando sem internet.
+
+**LGPD**: o cadastro tem a caixinha "o cliente autoriza receber mensagens" (a data da
+autorização fica guardada) e as campanhas e parabéns só vão para quem autorizou. O CPF
+só aparece para quem tem a permissão "Clientes e WhatsApp". A pedido do cliente, o
+botão "Apagar dados (LGPD)" apaga nome, telefone, CPF e nascimento — as vendas
+continuam nos relatórios, sem os dados pessoais.
 
 ## O que vai para a cozinha
 
@@ -95,8 +138,16 @@ estornar pagamentos do caixa que está aberto — o que já foi fechado não mud
 **Relatórios** (Administração → Relatórios do caixa), por período: total vendido,
 número de vendas, ticket médio, por forma de pagamento, por dia, por produto, por
 atendente, todos os caixas com diferença de fechamento, estornos e cancelamentos
-com motivo, e quanto há a receber. O botão **Planilha (Excel)** baixa as vendas do
-período para enviar ao contador.
+com motivo, e quanto há a receber.
+
+**Exportar relatório (PDF ou Excel)**: no mesmo lugar, o botão "Exportar relatório"
+deixa o administrador marcar o que entra — resumo, formas de pagamento, vendas por dia,
+produtos, atendentes, todas as vendas uma a uma, abertura/fechamento de caixa, sangrias
+e suprimentos, estornos, cancelamentos, comandas, histórico de ações e cadastro de
+clientes — e escolher **PDF** (para imprimir ou enviar ao contador) ou **planilha
+Excel** (uma aba por assunto, com valores e datas de verdade para somar e filtrar).
+O arquivo é gerado no próprio PC e baixa sozinho. Histórico e clientes só aparecem
+para quem tem essas permissões.
 
 ## Impressoras
 
@@ -206,6 +257,7 @@ src/comandas/
   banco.py                  SQLite + regras: usuários/permissões, auditoria, pedidos, caixa, relatórios
   servidor.py               rotas Flask (telas + API) com checagem de permissão
   impressora.py             cupons ESC/POS (cozinha, conta, fechamento) e envio TCP
+  exportar.py               relatório para download em PDF (reportlab) ou Excel (openpyxl)
   web/templates, web/static telas (HTML/CSS/JS puro, sem build)
 tests/
 build_tools/                PyInstaller (.spec), script de build e teste do .exe

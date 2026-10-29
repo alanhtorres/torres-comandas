@@ -12,11 +12,12 @@ from pathlib import Path
 
 import segno
 from flask import (
-    Flask, Response, abort, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for,
+    Flask, Response, abort, g, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for,
 )
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from . import impressora
+from .exportar import SECOES, exportar
 from .banco import FORMAS_PAGAMENTO, MODELOS, PERMISSOES, PERMISSOES_ADMIN, Banco, ErroNegocio
 
 EXT_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
@@ -206,6 +207,11 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def tela_garcom():
         return render_template("garcom.html")
 
+    @app.get("/comandas")
+    @exigir("comandas")
+    def tela_comandas():
+        return render_template("comandas.html", modo_ativo=banco.config()["modo_comandas_ativo"])
+
     @app.get("/admin")
     @exigir(*PERMISSOES_ADMIN)
     def tela_admin():
@@ -254,6 +260,9 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             "produtos": banco.listar_produtos(somente_ativos=True) if pode("pedidos", "garcom") else [],
             "contas": banco.contas_abertas() if pode("pedidos", "receber", "garcom") else [],
             "mesas": [m["numero"] for m in banco.listar_mesas()] if pode("garcom") else [],
+            "modo_comandas": cfg["modo_comandas_ativo"],
+            "comandas": (banco.listar_comandas() if cfg["modo_comandas_ativo"]
+                         and pode("pedidos", "garcom", "receber", "comandas") else []),
             "caixa_aberto": sessao is not None,
             "sessao": None,
             "recebimentos": [],
@@ -311,10 +320,12 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         origem = "garcom" if dados.get("origem") == "garcom" or not pode("pedidos") else "caixa"
         if origem == "garcom" and not pode("garcom"):
             return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
-        if origem == "garcom" and not str(dados.get("mesa") or "").strip():
-            raise ErroNegocio("Escolha a mesa do pedido.")
+        if origem == "garcom" and not str(dados.get("mesa") or "").strip() and not dados.get("comanda_id"):
+            raise ErroNegocio("Escolha a mesa ou a comanda do pedido.")
+        comanda_id = dados.get("comanda_id") or None
         pedido = banco.criar_pedido(dados.get("itens"), origem=origem, mesa=dados.get("mesa", ""),
-                                    cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator())
+                                    cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator(),
+                                    comanda_id=comanda_id)
         if banco.config()["impressora_cozinha_ativa"] and pedido["vai_cozinha"]:
             _imprimir_cozinha(pedido)
         return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"])})
@@ -712,6 +723,88 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def api_atualizar_usuario(usuario_id):
         return jsonify({"ok": True, "usuario": banco.atualizar_usuario(usuario_id, request.get_json(silent=True) or {}, por=ator())})
 
+    # --- Clientes e comandas ----------------------------------------------------
+
+    @app.get("/api/clientes/busca")
+    @exigir("comandas", "clientes")
+    def api_buscar_clientes():
+        # Na entrada aparecem nome e telefone; CPF completo só para quem
+        # tem a permissão "clientes".
+        return jsonify({"clientes": banco.buscar_clientes(request.args.get("q", ""), com_cpf=pode("clientes"))})
+
+    @app.post("/api/clientes")
+    @exigir("comandas", "clientes")
+    def api_criar_cliente():
+        return jsonify({"ok": True, "cliente": banco.criar_cliente(request.get_json(silent=True) or {}, por=ator())})
+
+    @app.get("/api/clientes")
+    @exigir("clientes")
+    def api_clientes():
+        return jsonify({"clientes": banco.listar_clientes(request.args.get("busca", "").strip())})
+
+    @app.put("/api/clientes/<int:cliente_id>")
+    @exigir("clientes")
+    def api_atualizar_cliente(cliente_id):
+        return jsonify({"ok": True, "cliente": banco.atualizar_cliente(cliente_id, request.get_json(silent=True) or {}, por=ator())})
+
+    @app.delete("/api/clientes/<int:cliente_id>")
+    @exigir("clientes")
+    def api_remover_cliente(cliente_id):
+        banco.remover_dados_cliente(cliente_id, por=ator())
+        return jsonify({"ok": True})
+
+    @app.get("/api/clientes.csv")
+    @exigir("clientes")
+    def api_clientes_csv():
+        banco.registrar_acao(ator(), "Exportou lista de clientes")
+        return Response(banco.clientes_csv(), mimetype="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=clientes.csv"})
+
+    @app.get("/api/aniversariantes")
+    @exigir("comandas", "clientes")
+    def api_aniversariantes():
+        dias = max(0, min(int(request.args.get("dias", 7) or 7), 31))
+        cfg = banco.config()
+        return jsonify({"aniversariantes": banco.aniversariantes(dias), "mensagem": cfg["msg_aniversario"],
+                        "loja": cfg["nome_loja"], "whatsapp_abrir_em": cfg["whatsapp_abrir_em"],
+                        "pode_enviar": pode("clientes")})
+
+    @app.get("/api/campanhas/publico")
+    @exigir("clientes")
+    def api_publico_campanha():
+        return jsonify({"clientes": banco.publico_campanha(request.args.get("publico", ""), request.args.get("campanha", "")),
+                        "loja": banco.config()["nome_loja"], "whatsapp_abrir_em": banco.config()["whatsapp_abrir_em"]})
+
+    @app.get("/api/campanhas/publicos")
+    @exigir("clientes")
+    def api_publicos():
+        return jsonify({"publicos": banco.PUBLICOS})
+
+    @app.post("/api/mensagens")
+    @exigir("clientes")
+    def api_registrar_mensagem():
+        dados = request.get_json(silent=True) or {}
+        banco.registrar_mensagem(int(dados.get("cliente_id") or 0), dados.get("campanha", ""), dados.get("texto", ""), por=ator())
+        return jsonify({"ok": True})
+
+    @app.get("/api/comandas")
+    @exigir("comandas", "pedidos", "receber", "garcom")
+    def api_comandas():
+        return jsonify({"comandas": banco.listar_comandas()})
+
+    @app.post("/api/comandas")
+    @exigir("comandas")
+    def api_abrir_comanda():
+        if not banco.config()["modo_comandas_ativo"]:
+            raise ErroNegocio("O modo comanda está desligado. Ative em Administração → Configurações.")
+        dados = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, "comanda": banco.abrir_comanda(dados.get("cliente_id"), dados.get("numero", ""), por=ator())})
+
+    @app.post("/api/comandas/<int:comanda_id>/fechar")
+    @exigir("comandas")
+    def api_fechar_comanda(comanda_id):
+        return jsonify({"ok": True, "comanda": banco.fechar_comanda(comanda_id, por=ator())})
+
     # --- Relatórios e histórico ----------------------------------------------
 
     def _periodo_args():
@@ -731,6 +824,26 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         banco.registrar_acao(ator(), "Exportou planilha de vendas", f"{de} a {ate}")
         return Response(banco.vendas_csv(de, ate), mimetype="text/csv",
                         headers={"Content-Disposition": f"attachment; filename=vendas_{de}_a_{ate}.csv"})
+
+    @app.get("/api/relatorios/opcoes")
+    @exigir("relatorios")
+    def api_opcoes_exportacao():
+        return jsonify({"secoes": {k: titulo for k, (titulo, extra) in SECOES.items() if not extra or pode(extra)}})
+
+    @app.get("/api/relatorios/exportar")
+    @exigir("relatorios")
+    def api_exportar_relatorio():
+        de, ate = _periodo_args()
+        secoes = [s for s in request.args.get("secoes", "").split(",") if s in SECOES]
+        for chave in secoes:
+            extra = SECOES[chave][1]
+            if extra and not pode(extra):
+                return jsonify({"ok": False, "erro": f"Você não tem permissão para incluir \"{SECOES[chave][0]}\"."}), 403
+        formato = request.args.get("formato", "xlsx")
+        conteudo, nome, mime = exportar(banco, de, ate, secoes, formato, usuario_atual()["nome"])
+        banco.registrar_acao(ator(), "Exportou relatório", f"{formato.upper()} de {de} a {ate}: "
+                             + ", ".join(SECOES[s][0] for s in secoes))
+        return send_file(io.BytesIO(conteudo), mimetype=mime, as_attachment=True, download_name=nome)
 
     @app.get("/api/auditoria")
     @exigir("historico")

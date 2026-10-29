@@ -53,3 +53,7 @@ progress { width: 100%; height: 12px; }
 .lista-checks input { margin-top: 3px; }
 .lista-permissoes { display: flex; flex-wrap: wrap; gap: 4px; }
 .subtitulo { font-size: 1rem; margin: 18px 0 6px; }
+textarea { resize: vertical; }
+.enviado td { opacity: .55; }
+.botao-zap { background: #25d366; color: #052e16; font-weight: 700; }
+.progresso-campanha { margin: 12px 0 6px; font-weight: 600; }

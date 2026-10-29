@@ -23,7 +23,7 @@ try {
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     Invoke-WebRequest "$base/primeiro-acesso" -Method Post -WebSession $s -UseBasicParsing `
         -Body @{ nome = "Teste"; usuario = "teste"; senha = "teste123"; confirmar = "teste123" } | Out-Null
-    foreach ($tela in "/", "/caixa", "/cozinha", "/painel", "/admin", "/static/comum.js", "/static/painel.css") {
+    foreach ($tela in "/", "/caixa", "/cozinha", "/garcom", "/comandas", "/painel", "/admin", "/static/comum.js", "/static/painel.css") {
         $r = Invoke-WebRequest "$base$tela" -WebSession $s -UseBasicParsing
         if ($r.StatusCode -ne 200) { throw "$tela respondeu $($r.StatusCode)" }
         if ($tela -eq "/caixa" -and $r.Content -notmatch "Novo pedido") { throw "/caixa não abriu logado" }
@@ -50,7 +50,17 @@ try {
     $qr = Invoke-WebRequest "$base/qrcode/mesa/1.svg" -WebSession $s -UseBasicParsing
     if ($qr.Content -notmatch "<svg") { throw "QR code não foi gerado" }
     if (-not (Get-ChildItem (Join-Path $dados "backups") -Filter "comandas-*.db")) { throw "Backup diário não foi criado" }
-    Write-Host "OK: $Exe funcionando (login, telas, pedido, painel, caixa, histórico, QR code, backup)" -ForegroundColor Green
+    # Comanda com cadastro do cliente
+    Invoke-RestMethod "$base/api/config" -Method Put -Headers $json -WebSession $s -Body '{"modo_comandas_ativo":true}' | Out-Null
+    $cli = Invoke-RestMethod "$base/api/clientes" -Method Post -Headers $json -WebSession $s -Body ([Text.Encoding]::UTF8.GetBytes('{"nome":"Maria Conceição","telefone":"(11) 98765-4321","aceita_mensagens":true}'))
+    $cmd = Invoke-RestMethod "$base/api/comandas" -Method Post -Headers $json -WebSession $s -Body (@{ cliente_id = $cli.cliente.id } | ConvertTo-Json)
+    if ($cmd.comanda.numero -ne "1") { throw "Comanda não abriu" }
+    # Relatórios para download (PDF e Excel gerados pelo programa empacotado)
+    $pdf = Invoke-WebRequest "$base/api/relatorios/exportar?formato=pdf&secoes=resumo,vendas,caixas,comandas,historico,clientes" -WebSession $s -UseBasicParsing
+    if ([Text.Encoding]::ASCII.GetString($pdf.RawContentStream.ToArray()[0..3]) -ne "%PDF") { throw "PDF não foi gerado" }
+    $xlsx = Invoke-WebRequest "$base/api/relatorios/exportar?formato=xlsx&secoes=resumo,vendas,produtos" -WebSession $s -UseBasicParsing
+    if ([Text.Encoding]::ASCII.GetString($xlsx.RawContentStream.ToArray()[0..1]) -ne "PK") { throw "Planilha Excel não foi gerada" }
+    Write-Host "OK: $Exe funcionando (login, telas, pedido, painel, caixa, histórico, QR code, backup, comanda, PDF, Excel)" -ForegroundColor Green
 }
 finally {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

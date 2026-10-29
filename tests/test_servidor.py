@@ -80,7 +80,7 @@ def test_login_logout_e_redirecionamento(ambiente, admin):
     assert "Saiu do sistema" in acoes and "Tentativa de login recusada" in acoes
 
 
-@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/garcom", "/painel", "/admin", "/admin/qrcodes"])
+@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/garcom", "/comandas", "/painel", "/admin", "/admin/qrcodes"])
 def test_telas_abrem_para_o_admin(admin, caminho):
     r = admin.get(caminho)
     assert r.status_code == 200
@@ -465,3 +465,79 @@ def test_modelo_caixa_nao_inclui_estorno(admin):
     assert "estornar" not in modelos["caixa"]["permissoes"]
     assert modelos["garcom"]["permissoes"] == ["garcom"]
     assert "estornar" in modelos["admin"]["permissoes"]
+
+
+# --- Comandas, clientes e WhatsApp ---------------------------------------------
+
+def test_fluxo_de_comanda_pela_api(ambiente, admin):
+    app, banco, _ = ambiente
+    criar_usuario(admin, "porteiro", ["comandas"])
+    criar_usuario(admin, "carlos", ["garcom"])
+    porteiro, garcom = entrar(app, "porteiro"), entrar(app, "carlos")
+    p = _produto(admin)
+    assert porteiro.get("/comandas").status_code == 200
+    r = porteiro.post("/api/clientes", json={"nome": "Maria Silva", "telefone": "(11) 98765-4321", "cpf": "529.982.247-25"})
+    maria = r.get_json()["cliente"]
+    # modo comanda desligado: não abre
+    r = porteiro.post("/api/comandas", json={"cliente_id": maria["id"]})
+    assert r.status_code == 400 and "desligado" in r.get_json()["erro"]
+    banco.salvar_config({"modo_comandas_ativo": True})
+    k = porteiro.post("/api/comandas", json={"cliente_id": maria["id"], "numero": "15"}).get_json()["comanda"]
+    assert k["numero"] == "15"
+
+    # porteiro não vê CPF; quem tem "clientes" vê
+    assert porteiro.get("/api/clientes/busca?q=maria").get_json()["clientes"][0]["cpf"] is None
+    assert admin.get("/api/clientes/busca?q=maria").get_json()["clientes"][0]["cpf"] == "52998224725"
+    assert porteiro.get("/api/clientes").status_code == 403
+    assert porteiro.get("/api/clientes.csv").status_code == 403
+    assert porteiro.get("/caixa").status_code == 403
+
+    # garçom vê a comanda e lança nela, sem mesa
+    estado = garcom.get("/api/estado").get_json()
+    assert estado["modo_comandas"] and estado["comandas"][0]["numero"] == "15"
+    r = garcom.post("/api/pedidos", json={"origem": "garcom", "comanda_id": k["id"], "itens": [{"produto_id": p["id"]}]})
+    assert r.status_code == 200 and r.get_json()["pedido"]["comanda_numero"] == "15"
+    assert admin.get("/api/estado").get_json()["contas"][0]["titulo"] == "Comanda 15 · Maria Silva"
+    assert garcom.post("/api/comandas", json={"cliente_id": maria["id"]}).status_code == 403
+
+
+def test_aniversariantes_e_campanha_pela_api(ambiente, admin):
+    app, banco, _ = ambiente
+    from datetime import datetime
+    hoje = datetime.now().replace(year=1990).strftime("%Y-%m-%d")
+    c = admin.post("/api/clientes", json={"nome": "Ana Paula", "telefone": "11911112222", "nascimento": hoje,
+                                          "aceita_mensagens": True}).get_json()["cliente"]
+    r = admin.get("/api/aniversariantes?dias=0").get_json()
+    assert r["aniversariantes"][0]["nome"] == "Ana Paula" and "{nome}" in r["mensagem"] and r["pode_enviar"]
+    publico = admin.get("/api/campanhas/publico?publico=todos&campanha=Promo").get_json()["clientes"]
+    assert [x["nome"] for x in publico] == ["Ana Paula"]
+    assert admin.post("/api/mensagens", json={"cliente_id": c["id"], "campanha": "Promo", "texto": "Oi"}).status_code == 200
+    assert admin.get("/api/campanhas/publico?publico=todos&campanha=Promo").get_json()["clientes"][0]["enviado_em"]
+    criar_usuario(admin, "porteiro", ["comandas"])
+    porteiro = entrar(app, "porteiro")
+    assert porteiro.get("/api/aniversariantes?dias=0").get_json()["pode_enviar"] is False
+    assert porteiro.post("/api/mensagens", json={"cliente_id": c["id"], "campanha": "x"}).status_code == 403
+    csv = admin.get("/api/clientes.csv")
+    assert "Ana Paula" in csv.data.decode("utf-8-sig")
+    assert admin.delete(f"/api/clientes/{c['id']}").status_code == 200
+    assert admin.get("/api/clientes").get_json()["clientes"] == []
+
+
+def test_exportar_relatorio_pela_api(ambiente, admin):
+    app, banco, _ = ambiente
+    opcoes = admin.get("/api/relatorios/opcoes").get_json()["secoes"]
+    assert "historico" in opcoes and "clientes" in opcoes
+    r = admin.get("/api/relatorios/exportar?formato=pdf&secoes=resumo,vendas,historico")
+    assert r.status_code == 200 and r.mimetype == "application/pdf" and r.data.startswith(b"%PDF")
+    assert "attachment" in r.headers["Content-Disposition"] and ".pdf" in r.headers["Content-Disposition"]
+    r = admin.get("/api/relatorios/exportar?formato=xlsx&secoes=resumo")
+    assert r.data[:2] == b"PK"   # xlsx é um zip
+    assert "Exportou relatório" in [a["acao"] for a in banco.listar_auditoria("2000-01-01", "2100-01-01")]
+    assert admin.get("/api/relatorios/exportar?formato=pdf&secoes=").status_code == 400
+
+    # quem tem relatórios mas não tem "clientes"/"historico" não exporta esses dados
+    criar_usuario(admin, "gerente", ["relatorios"])
+    gerente = entrar(app, "gerente")
+    assert set(gerente.get("/api/relatorios/opcoes").get_json()["secoes"]) & {"historico", "clientes"} == set()
+    assert gerente.get("/api/relatorios/exportar?formato=xlsx&secoes=resumo,clientes").status_code == 403
+    assert gerente.get("/api/relatorios/exportar?formato=xlsx&secoes=resumo").status_code == 200

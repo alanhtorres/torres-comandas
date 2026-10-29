@@ -251,6 +251,71 @@
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
 
+  // --- Clientes e WhatsApp -------------------------------------------------
+
+  function mascaraTelefone(valor) {
+    const d = String(valor || "").replace(/\D/g, "").slice(0, 11);
+    if (d.length <= 2) return d;
+    if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+    if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  }
+
+  function mascaraCpf(valor) {
+    const d = String(valor || "").replace(/\D/g, "").slice(0, 11);
+    return d.replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+  }
+
+  // Formulário de cadastro de cliente (nome e telefone obrigatórios).
+  function formCliente(c) {
+    c = c || {};
+    const campo = (props) => el("input", props);
+    const nome = campo({ maxlength: 80, required: true, value: c.nome || "", autocomplete: "off" });
+    const tel = campo({ inputmode: "tel", required: true, placeholder: "(11) 98765-4321", value: mascaraTelefone(c.telefone || "") });
+    const cpf = campo({ inputmode: "numeric", placeholder: "Opcional", value: c.cpf ? mascaraCpf(c.cpf) : "" });
+    const nasc = campo({ type: "date", value: c.nascimento || "" });
+    const aceita = el("input", { type: "checkbox", checked: !!c.aceita_mensagens });
+    const obs = campo({ maxlength: 300, placeholder: "Opcional", value: c.observacao || "" });
+    tel.addEventListener("input", () => (tel.value = mascaraTelefone(tel.value)));
+    cpf.addEventListener("input", () => (cpf.value = mascaraCpf(cpf.value)));
+    const elemento = el("div", { class: "form-cliente" },
+      el("label", {}, "Nome completo *"), nome,
+      el("div", { class: "campos-duplos" },
+        el("div", {}, el("label", {}, "Telefone (WhatsApp) *"), tel),
+        el("div", {}, el("label", {}, "CPF"), cpf)),
+      el("div", { class: "campos-duplos" },
+        el("div", {}, el("label", {}, "Data de nascimento"), nasc),
+        el("div", {}, el("label", {}, "Observação"), obs)),
+      el("label", { class: "inline consentimento" }, aceita,
+        "O cliente autoriza receber mensagens de promoções, eventos e aniversário pelo WhatsApp"));
+    return {
+      elemento,
+      valores: () => ({ nome: nome.value, telefone: tel.value, cpf: cpf.value, nascimento: nasc.value,
+        aceita_mensagens: aceita.checked, observacao: obs.value }),
+    };
+  }
+
+  // Troca {nome} (primeiro nome), {nome_completo} e {loja} na mensagem.
+  function preencherMensagem(modelo, cliente, loja) {
+    const primeiro = String(cliente.nome || "").trim().split(/\s+/)[0] || "";
+    return String(modelo || "").replaceAll("{nome}", primeiro).replaceAll("{nome_completo}", cliente.nome || "")
+      .replaceAll("{loja}", loja || "");
+  }
+
+  // Abre a conversa com a mensagem já escrita — só falta apertar "enviar".
+  function abrirWhatsapp(telefone, texto, modo) {
+    const numero = "55" + String(telefone).replace(/\D/g, "");
+    const t = encodeURIComponent(texto);
+    if (modo === "app") {
+      location.href = `whatsapp://send?phone=${numero}&text=${t}`;
+    } else if (modo === "link") {
+      window.open(`https://wa.me/${numero}?text=${t}`, "_blank");
+    } else {
+      // Sempre na mesma aba do WhatsApp Web, para não abrir uma aba por cliente.
+      window.open(`https://web.whatsapp.com/send?phone=${numero}&text=${t}`, "whatsapp_envio");
+    }
+  }
+
   const STATUS_NOME = {
     novo: "Na fila",
     preparando: "Preparando",
@@ -261,5 +326,6 @@
   };
 
   window.C = { api, moeda, el, minutosDesde, hora, dataHora, hojeISO, aviso, bip, falar, somLiberado, liberarSom, acompanhar,
-    centavos, reais, campoDinheiro, dialogo, STATUS_NOME };
+    centavos, reais, campoDinheiro, dialogo, STATUS_NOME, mascaraTelefone, mascaraCpf, formCliente,
+    preencherMensagem, abrirWhatsapp };
 })();

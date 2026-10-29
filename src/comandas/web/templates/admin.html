@@ -12,13 +12,14 @@
     <h1>⚙️ Administração</h1>
     <span class="espaco"></span>
     <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
-    <nav><a href="/">Início</a>{% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}{% if pode('garcom') %}<a href="/garcom">Garçom</a>{% endif %}<a href="/sair">Sair</a></nav>
+    <nav><a href="/">Início</a>{% if pode('pedidos', 'receber', 'caixa') %}<a href="/caixa">Caixa</a>{% endif %}{% if pode('garcom') %}<a href="/garcom">Garçom</a>{% endif %}{% if pode('comandas') %}<a href="/comandas">Comandas</a>{% endif %}<a href="/sair">Sair</a></nav>
   </header>
   <nav class="abas">
     {% if pode('relatorios') %}<a href="#relatorios" data-aba="relatorios">Relatórios do caixa</a>{% endif %}
     {% if pode('cardapio') %}<a href="#produtos" data-aba="produtos">Cardápio</a>{% endif %}
     {% if pode('mesas') %}<a href="#mesas" data-aba="mesas">Mesas e QR codes</a>{% endif %}
     {% if pode('midias') %}<a href="#midias" data-aba="midias">Fotos e vídeos do painel</a>{% endif %}
+    {% if pode('clientes') %}<a href="#clientes" data-aba="clientes">Clientes e WhatsApp</a>{% endif %}
     {% if pode('usuarios') %}<a href="#usuarios" data-aba="usuarios">Usuários e permissões</a>{% endif %}
     {% if pode('historico') %}<a href="#historico" data-aba="historico">Histórico de ações</a>{% endif %}
     {% if pode('configuracoes') %}<a href="#config" data-aba="config">Configurações</a>{% endif %}
@@ -36,7 +37,23 @@
         <button data-periodo="30">30 dias</button>
         <button data-periodo="mes">Este mês</button>
         <span class="espaco"></span>
-        <a id="rel-csv" href="#"><button>⬇ Planilha (Excel)</button></a>
+        <button id="abrir-exportar" class="primario">📥 Exportar relatório (PDF ou Excel)</button>
+      </div>
+      <div id="cartao-exportar" class="cartao" hidden>
+        <h2>Exportar relatório do período escolhido acima</h2>
+        <p class="dica">Marque o que deve entrar no relatório. O arquivo é gerado aqui no computador (não precisa de internet) e baixa sozinho.</p>
+        <div class="linha" style="margin-bottom: 6px">
+          <button type="button" id="exp-todos" class="discreto">Marcar tudo</button>
+          <button type="button" id="exp-nenhum" class="discreto">Desmarcar tudo</button>
+        </div>
+        <div id="exp-secoes" class="lista-checks"></div>
+        <div class="linha" style="margin-top: 14px">
+          <strong>Formato:</strong>
+          <label class="inline"><input type="radio" name="exp-formato" value="pdf" checked> PDF (para imprimir ou enviar)</label>
+          <label class="inline"><input type="radio" name="exp-formato" value="xlsx"> Planilha Excel (para conferir e fazer contas)</label>
+          <span class="espaco"></span>
+          <button id="exp-gerar" class="primario grande">Gerar e baixar</button>
+        </div>
       </div>
       <div id="relatorio"></div>
     </section>
@@ -111,6 +128,44 @@
       <div class="cartao">
         <h2>Sequência do painel</h2>
         <div id="lista-midias"></div>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if pode('clientes') %}
+    <section id="aba-clientes" class="aba" hidden>
+      <div class="cartao">
+        <h2>🎂 Aniversariantes (hoje e próximos 7 dias)</h2>
+        <div id="lista-aniversarios"></div>
+      </div>
+
+      <div class="cartao">
+        <h2>Enviar mensagem pelo WhatsApp</h2>
+        <p class="dica">Monte a mensagem, escolha para quem, e clique em "Abrir no WhatsApp" em cada cliente: a conversa abre com o
+          texto pronto e você só aperta enviar. Só entram clientes que <strong>autorizaram</strong> receber mensagens (LGPD).
+          Envie com moderação — o WhatsApp pode bloquear números que mandam muitas mensagens seguidas para quem não tem o
+          seu contato salvo. Precisa de internet só neste momento do envio.</p>
+        <div class="grade-form">
+          <div><label for="camp-nome">Nome da campanha (para saber quem já recebeu)</label><input id="camp-nome" maxlength="60" placeholder="Ex.: Promoção de sexta"></div>
+          <div><label for="camp-publico">Para quem</label><select id="camp-publico"></select></div>
+        </div>
+        <label for="camp-texto">Mensagem — use {nome} para o primeiro nome do cliente e {loja} para o nome do estabelecimento</label>
+        <textarea id="camp-texto" rows="4" maxlength="1500" placeholder="Olá, {nome}! Nesta sexta tem chopp em dobro no {loja}. Esperamos você!"></textarea>
+        <p class="dica" id="camp-previa"></p>
+        <div class="acoes-form"><button id="camp-montar" class="primario">Montar lista de envio</button></div>
+        <div id="camp-lista"></div>
+      </div>
+
+      <div class="cartao">
+        <div class="linha" style="justify-content: space-between">
+          <h2 style="margin: 0">Clientes cadastrados <span id="n-clientes" class="etiqueta">0</span></h2>
+          <span class="linha" style="margin: 0">
+            <input id="busca-clientes" type="search" placeholder="Buscar nome, telefone ou CPF" style="min-width: 220px">
+            <a href="/api/clientes.csv"><button>⬇ Planilha (Excel)</button></a>
+            <button id="cliente-novo" class="primario">+ Cliente</button>
+          </span>
+        </div>
+        <div id="lista-clientes"></div>
       </div>
     </section>
     {% endif %}
@@ -193,6 +248,22 @@
                 <option value="cp850">Padrão (página 850)</option><option value="cp860">Português (página 860)</option><option value="ascii">Sem acentos (se sair caractere estranho)</option>
               </select></div>
           </div>
+        </div>
+
+        <div class="cartao">
+          <h2>Comandas e clientes</h2>
+          <label class="inline"><input type="checkbox" name="modo_comandas_ativo"> Usar comandas: todo cliente que entra é cadastrado (nome e telefone obrigatórios; CPF e nascimento opcionais) e recebe uma comanda</label>
+          <div class="grade-form">
+            <div><label for="cfg-ddd_padrao">DDD padrão (para telefones digitados sem DDD)</label><input id="cfg-ddd_padrao" name="ddd_padrao" maxlength="2" inputmode="numeric" placeholder="Ex.: 11"></div>
+            <div><label for="cfg-whatsapp_abrir_em">Abrir o WhatsApp no</label>
+              <select id="cfg-whatsapp_abrir_em" name="whatsapp_abrir_em">
+                <option value="web">WhatsApp Web (no navegador do PC)</option>
+                <option value="app">Aplicativo WhatsApp instalado no PC</option>
+                <option value="link">Link wa.me (melhor em celular/tablet)</option>
+              </select></div>
+          </div>
+          <label for="cfg-msg_aniversario">Mensagem de aniversário — {nome} = primeiro nome, {loja} = nome do estabelecimento</label>
+          <textarea id="cfg-msg_aniversario" name="msg_aniversario" rows="3" maxlength="1000"></textarea>
         </div>
 
         <div class="barra-salvar"><button type="submit" class="primario grande">Salvar configurações</button></div>

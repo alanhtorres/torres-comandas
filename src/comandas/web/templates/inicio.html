@@ -29,6 +29,9 @@
       {% if pode('pedidos', 'receber', 'caixa') %}
       <a href="/caixa"><div class="cartao"><div class="icone">🧾</div><h2>Caixa</h2><p>Lançar pedidos, chamar o cliente no painel, receber pagamentos, abrir e fechar o caixa.</p><code>{{ url_base }}/caixa</code></div></a>
       {% endif %}
+      {% if pode('comandas') %}
+      <a href="/comandas"><div class="cartao"><div class="icone">🎟️</div><h2>Comandas</h2><p>Entrada: cadastrar o cliente (nome e telefone), abrir e fechar comandas, aniversariantes do dia.</p><code>{{ url_base }}/comandas</code></div></a>
+      {% endif %}
       {% if pode('garcom') %}
       <a href="/garcom"><div class="cartao"><div class="icone">🛎️</div><h2>Garçom</h2><p>Para celular/tablet: fazer pedidos na mesa, receber os chamados do QR code e entregar o que ficou pronto.</p><code>{{ url_base }}/garcom</code></div></a>
       {% endif %}

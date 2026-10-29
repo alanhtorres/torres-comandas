@@ -8,6 +8,7 @@
   let assinaturaProdutos = "";
   let categoriaAtiva = null;
   let mesa = "";
+  let comandaId = null;
   const carrinho = new Map(); // produto_id -> {quantidade, observacao}
   let chamadosVistos = null;
   let entregasVistas = null;
@@ -27,7 +28,9 @@
 
   function alertar(tipo) {
     bip(tipo);
-    if (navigator.vibrate) navigator.vibrate(tipo === "garcom" ? [400, 150, 400, 150, 400] : [250, 100, 250]);
+    // O navegador só deixa vibrar depois que o garçom tocou na tela uma vez.
+    const tocou = !navigator.userActivation || navigator.userActivation.hasBeenActive;
+    if (navigator.vibrate && tocou) navigator.vibrate(tipo === "garcom" ? [400, 150, 400, 150, 400] : [250, 100, 250]);
   }
 
   function renderAlertas() {
@@ -56,6 +59,29 @@
     }, m)));
   }
   $("mesa-outra").addEventListener("input", () => { mesa = $("mesa-outra").value.trim(); renderMesas(); renderBarra(); });
+
+  function comandaSelecionada() {
+    return estado.comandas.find((k) => k.id === comandaId) || null;
+  }
+
+  function renderComandasGarcom() {
+    $("secao-comandas").hidden = !estado.modo_comandas;
+    if (!estado.modo_comandas) return;
+    if (comandaId && !comandaSelecionada()) comandaId = null; // fechou enquanto o garçom anotava
+    const filtro = $("busca-comanda").value.trim().toLowerCase();
+    const lista = estado.comandas.filter((k) => !filtro || k.numero.toLowerCase() === filtro || k.cliente_nome.toLowerCase().includes(filtro));
+    $("comandas").replaceChildren(...(lista.length ? lista.map((k) => el("button", {
+      class: k.id === comandaId ? "ativa" : "",
+      onclick: () => { comandaId = k.id === comandaId ? null : k.id; renderComandasGarcom(); renderBarra(); },
+    }, el("strong", {}, k.numero), el("small", {}, k.cliente_nome + (k.aniversario_hoje ? " 🎂" : ""))))
+      : [el("span", { class: "dica" }, estado.comandas.length ? "Nenhuma comanda com esse filtro." : "Nenhuma comanda aberta.")]));
+  }
+  $("busca-comanda").addEventListener("input", renderComandasGarcom);
+
+  function destino() {
+    const k = comandaSelecionada();
+    return [k ? "Comanda " + k.numero : null, mesa ? "Mesa " + mesa : null].filter(Boolean).join(" · ");
+  }
 
   function renderCategorias() {
     const cats = [...new Set(produtos.map((p) => p.categoria))];
@@ -109,12 +135,12 @@
     const { total, qtd } = resumoCarrinho();
     const barra = $("barra-pedido");
     barra.hidden = !qtd || abaAtual() !== "novo";
-    barra.textContent = (mesa ? "Mesa " + mesa : "Escolha a mesa") + ` · ${qtd} ite${qtd === 1 ? "m" : "ns"} · ${moeda(total)} — revisar e enviar`;
+    barra.textContent = (destino() || "Escolha a mesa ou comanda") + ` · ${qtd} ite${qtd === 1 ? "m" : "ns"} · ${moeda(total)} — revisar e enviar`;
   }
 
   $("barra-pedido").addEventListener("click", () => {
-    if (!mesa) {
-      aviso("Escolha a mesa primeiro", "erro");
+    if (!mesa && !comandaId) {
+      aviso("Escolha a mesa ou a comanda primeiro", "erro");
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
@@ -137,20 +163,23 @@
     }
     renderLista();
     dialogo({
-      titulo: "Pedido da mesa " + mesa,
+      titulo: "Pedido — " + destino(),
       corpo: el("div", {}, lista,
         el("div", { class: "linha-valor destaque" }, el("span", {}, "Total"), el("span", {}, moeda(resumoCarrinho().total))),
         el("label", {}, "Nome do cliente"), cliente, el("label", {}, "Observação para a cozinha"), obs),
       confirmar: "Enviar pedido",
       aoConfirmar: async () => {
         const r = await api("POST", "/api/pedidos", {
-          origem: "garcom", mesa,
+          origem: "garcom", mesa, comanda_id: comandaId,
           itens: [...carrinho].map(([id, i]) => ({ produto_id: id, quantidade: i.quantidade, observacao: i.observacao })),
           cliente: cliente.value, observacao: obs.value,
         });
-        aviso(`Pedido nº ${r.pedido.codigo} da mesa ${mesa} enviado` + (r.pedido.vai_cozinha ? " para a cozinha" : " (já está pronto)"), "ok");
+        aviso(`Pedido nº ${r.pedido.codigo} (${destino()}) enviado` + (r.pedido.vai_cozinha ? " para a cozinha" : " (já está pronto)"), "ok");
         carrinho.clear();
         mesa = "";
+        comandaId = null;
+        $("busca-comanda").value = "";
+        renderComandasGarcom();
         $("mesa-outra").value = "";
         renderMesas();
         renderProdutos();
@@ -163,7 +192,7 @@
   // --- Entregar e mesas ------------------------------------------------------
 
   function paraEntregar() {
-    return estado.pedidos.filter((p) => p.mesa && (p.status === "pronto" || p.status === "chamado"))
+    return estado.pedidos.filter((p) => (p.mesa || p.comanda_numero) && (p.status === "pronto" || p.status === "chamado"))
       .sort((a, b) => (a.pronto_em || 0) - (b.pronto_em || 0));
   }
 
@@ -172,13 +201,14 @@
     $("n-entregar").textContent = lista.length;
     $("n-entregar").className = lista.length ? "" : "zero";
     $("lista-entregar").replaceChildren(...(lista.length ? lista.map((p) => el("div", { class: "cartao-entrega" },
-      el("div", { class: "topo-cartao" }, el("span", { class: "mesa" }, "Mesa " + p.mesa), el("span", { class: "dica" }, "pedido " + p.codigo),
+      el("div", { class: "topo-cartao" }, el("span", { class: "mesa" }, p.mesa ? "Mesa " + p.mesa : "Comanda " + p.comanda_numero),
+        el("span", { class: "dica" }, "pedido " + p.codigo + (p.mesa && p.comanda_numero ? " · comanda " + p.comanda_numero : "") + (p.cliente ? " · " + p.cliente : "")),
         el("span", { class: "espaco" }), el("span", { class: "dica" }, "pronto há " + minutosDesde(p.pronto_em || p.criado_em) + " min")),
       el("ul", {}, p.itens.map((i) => el("li", {}, i.quantidade + "× " + i.nome + (i.observacao ? " (" + i.observacao + ")" : "")))),
       el("div", { class: "acoes" }, el("button", { class: "verde", onclick: async () => {
         try {
           await api("POST", `/api/pedidos/${p.id}/status`, { status: "entregue" });
-          aviso(`Pedido da mesa ${p.mesa} entregue`, "ok");
+          aviso(`Pedido ${p.codigo} entregue`, "ok");
           monitor.forcar();
         } catch (e) { aviso(e.message, "erro"); }
       } }, "✓ Entreguei na mesa"))))
@@ -224,6 +254,7 @@
       renderProdutos();
     }
     renderMesas();
+    renderComandasGarcom();
     renderAlertas();
     renderEntregar();
     renderContas();
