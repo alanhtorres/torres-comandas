@@ -82,14 +82,24 @@ Em **Administração → Clientes e WhatsApp**:
   WhatsApp" (a mensagem é configurável). Os aniversariantes do dia também aparecem
   na tela de Comandas, e o sistema avisa quando a comanda é aberta para quem está de
   aniversário.
+  Com mais de um aniversariante no dia, o botão "Enviar parabéns para os N
+  aniversariantes de hoje" manda um após o outro.
 - **Campanhas**: escreva a mensagem (use `{nome}` e `{loja}`), escolha o público
   (todos, aniversariantes do mês/semana, clientes que não vêm há 30 dias, novos) e
-  clique em "Abrir no WhatsApp" em cada cliente — a conversa abre com o texto pronto,
-  é só apertar enviar. O sistema marca quem já recebeu cada campanha.
+  clique em **Começar envio**. O sistema abre a conversa de um cliente por vez com o
+  texto pronto: aperte enviar no WhatsApp, volte e aperte **Enter** para o próximo
+  (dá para pular e voltar aos pulados no final). O nome da campanha é opcional e o
+  sistema marca quem já recebeu, sem repetir.
+- **Lista de transmissão** (para muitos clientes de uma vez): "Baixar contatos (.vcf)"
+  gera o arquivo para importar os clientes no celular da loja; no WhatsApp, crie uma
+  transmissão com eles (até 256 por lista) e mande a mensagem uma vez só. Depois,
+  "Marcar todos como enviados". A transmissão só chega para quem também salvou o
+  número da loja.
 - Lista de clientes com visitas, última visita e quanto gastou; planilha para o Excel.
 
 **Como o WhatsApp é aberto** (Configurações): WhatsApp Web no navegador do PC, o
-aplicativo WhatsApp instalado no PC, ou link wa.me (celular/tablet). Não usa robô nem
+aplicativo WhatsApp instalado no PC (o mais rápido para campanhas: não recarrega a cada
+cliente), ou link wa.me (celular/tablet); dá para trocar na hora do envio. Não usa robô nem
 API paga: quem envia é a pessoa, pelo WhatsApp da loja — isso evita o bloqueio do
 número, que acontece com programas de envio automático em massa. Precisa de internet
 só no momento do envio; o resto do sistema continua funcionando sem internet.

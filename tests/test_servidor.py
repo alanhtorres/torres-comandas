@@ -541,3 +541,30 @@ def test_exportar_relatorio_pela_api(ambiente, admin):
     assert set(gerente.get("/api/relatorios/opcoes").get_json()["secoes"]) & {"historico", "clientes"} == set()
     assert gerente.get("/api/relatorios/exportar?formato=xlsx&secoes=resumo,clientes").status_code == 403
     assert gerente.get("/api/relatorios/exportar?formato=xlsx&secoes=resumo").status_code == 200
+
+
+def test_transmissao_contatos_vcf_e_marcar_em_lote(ambiente, admin):
+    app, banco, _ = ambiente
+    a = admin.post("/api/clientes", json={"nome": "José; da Silva, Jr", "telefone": "11911112222",
+                                          "aceita_mensagens": True}).get_json()["cliente"]
+    b = admin.post("/api/clientes", json={"nome": "Bia", "telefone": "21988887777", "aceita_mensagens": True}).get_json()["cliente"]
+    nao = admin.post("/api/clientes", json={"nome": "Sem Aceite", "telefone": "31977776666"}).get_json()["cliente"]
+    assert admin.get("/api/campanhas/publicos").get_json()["whatsapp_abrir_em"] == "web"
+    vcf = admin.get("/api/campanhas/contatos.vcf?publico=todos")
+    assert vcf.status_code == 200 and vcf.mimetype == "text/vcard"
+    texto = vcf.data.decode("utf-8")
+    assert texto.count("BEGIN:VCARD") == 2 and "Sem Aceite" not in texto
+    assert "TEL;TYPE=CELL:+5511911112222\r\n" in texto and "FN:José\\; da Silva\\, Jr\r\n" in texto
+    r = admin.post("/api/mensagens/lote", json={"cliente_ids": [a["id"], b["id"], nao["id"]], "campanha": "Natal",
+                                               "texto": "Feliz Natal"}).get_json()
+    assert r["marcados"] == 2
+    publico = admin.get("/api/campanhas/publico?publico=todos&campanha=Natal").get_json()["clientes"]
+    assert all(c["enviado_em"] for c in publico)
+    from datetime import datetime
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    assert any("2 clientes (lista de transmissão)" in x["detalhes"] for x in banco.listar_auditoria(hoje, hoje))
+    assert admin.post("/api/mensagens/lote", json={"cliente_ids": [], "campanha": "x"}).status_code == 400
+    criar_usuario(admin, "porteiro", ["comandas"])
+    porteiro = entrar(app, "porteiro")
+    assert porteiro.get("/api/campanhas/contatos.vcf?publico=todos").status_code == 403
+    assert porteiro.post("/api/mensagens/lote", json={"cliente_ids": [a["id"]]}).status_code == 403

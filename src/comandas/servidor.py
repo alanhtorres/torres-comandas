@@ -778,7 +778,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @app.get("/api/campanhas/publicos")
     @exigir("clientes")
     def api_publicos():
-        return jsonify({"publicos": banco.PUBLICOS})
+        return jsonify({"publicos": banco.PUBLICOS, "whatsapp_abrir_em": banco.config()["whatsapp_abrir_em"]})
 
     @app.post("/api/mensagens")
     @exigir("clientes")
@@ -786,6 +786,21 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         dados = request.get_json(silent=True) or {}
         banco.registrar_mensagem(int(dados.get("cliente_id") or 0), dados.get("campanha", ""), dados.get("texto", ""), por=ator())
         return jsonify({"ok": True})
+
+    @app.post("/api/mensagens/lote")
+    @exigir("clientes")
+    def api_registrar_mensagens():
+        dados = request.get_json(silent=True) or {}
+        n = banco.registrar_mensagens(dados.get("cliente_ids") or [], dados.get("campanha", ""), dados.get("texto", ""), por=ator())
+        return jsonify({"ok": True, "marcados": n})
+
+    @app.get("/api/campanhas/contatos.vcf")
+    @exigir("clientes")
+    def api_contatos_vcf():
+        clientes = banco.publico_campanha(request.args.get("publico", ""), request.args.get("campanha", "") or "contatos")
+        banco.registrar_acao(ator(), "Exportou contatos para WhatsApp", f"{len(clientes)} clientes")
+        return Response(banco.contatos_vcard(clientes), mimetype="text/vcard; charset=utf-8",
+                        headers={"Content-Disposition": "attachment; filename=clientes-whatsapp.vcf"})
 
     @app.get("/api/comandas")
     @exigir("comandas", "pedidos", "receber", "garcom")

@@ -1242,6 +1242,39 @@ class Banco:
                 (cliente_id, campanha, _texto(texto, 2000), (por or {}).get("nome") or "Sistema", self.agora()))
             self._registrar(por, "Enviou WhatsApp", f"{campanha} — para {cliente['nome']} ({cliente['telefone_formatado']})")
 
+    def registrar_mensagens(self, cliente_ids: list, campanha: str, texto: str, por: Optional[dict] = None) -> int:
+        """Marca vários clientes como "já recebeu" de uma vez (ex.: depois de
+        mandar pela lista de transmissão do WhatsApp). Quem não autorizou
+        mensagens é ignorado. Devolve quantos foram marcados."""
+        campanha = _texto(campanha, 60) or "avulsa"
+        ids = sorted({int(i) for i in cliente_ids or [] if str(i).isdigit()})
+        if not ids:
+            raise ErroNegocio("Nenhum cliente na lista.")
+        agora = self.agora()
+        with self._transacao():
+            marcas = ",".join("?" * len(ids))
+            validos = [l["id"] for l in self.conn.execute(
+                f"SELECT id FROM clientes WHERE id IN ({marcas}) AND removido_em IS NULL AND aceita_mensagens = 1", ids)]
+            self.conn.executemany(
+                "INSERT INTO mensagens_enviadas (cliente_id, campanha, texto, usuario_nome, enviado_em) VALUES (?, ?, ?, ?, ?)",
+                [(i, campanha, _texto(texto, 2000), (por or {}).get("nome") or "Sistema", agora) for i in validos])
+            if validos:
+                self._registrar(por, "Enviou WhatsApp", f"{campanha} — para {len(validos)} clientes (lista de transmissão)")
+        return len(validos)
+
+    @staticmethod
+    def contatos_vcard(clientes: list) -> str:
+        """Arquivo .vcf para importar os clientes nos contatos do celular —
+        a lista de transmissão do WhatsApp só entrega para quem está salvo."""
+        def esc(v):
+            return str(v).replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", " ")
+        cartoes = []
+        for c in clientes:
+            cartoes.append("\r\n".join([
+                "BEGIN:VCARD", "VERSION:3.0", f"FN:{esc(c['nome'])}", f"N:;{esc(c['nome'])};;;",
+                f"TEL;TYPE=CELL:+55{c['telefone']}", "END:VCARD"]))
+        return "\r\n".join(cartoes) + ("\r\n" if cartoes else "")
+
     def clientes_csv(self) -> str:
         saida = io.StringIO()
         w = csv.writer(saida, delimiter=";")

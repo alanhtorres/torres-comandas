@@ -302,6 +302,61 @@
       } catch (e) { aviso(e.message, "erro"); }
     }
 
+    // Envio um por um: um botão só (ou Enter) abre a conversa do próximo
+    // cliente com o texto pronto e já marca como enviado.
+    let sequenciaAtiva = null;
+    function iniciarSequencia(alvo, lista, { texto, campanha, modo, aoEnviar, aoFechar }) {
+      const fila = lista.filter((c) => !c.enviado_em);
+      let pos = 0;
+      const pulados = [];
+      const caixa = el("div", { class: "sequencia" });
+      const fechar = () => { sequenciaAtiva = null; caixa.remove(); if (aoFechar) aoFechar(); };
+      const dicaModo = modo === "web"
+        ? "O WhatsApp Web recarrega a cada cliente (alguns segundos). Para ir mais rápido, escolha \"Aplicativo WhatsApp do PC\"."
+        : modo === "app" ? "Na primeira vez o navegador pergunta se pode abrir o WhatsApp: marque \"sempre permitir\"." : "";
+      function desenhar() {
+        const enviados = lista.filter((c) => c.enviado_em).length;
+        const status = el("div", { class: "seq-status" }, `${enviados} de ${lista.length} enviados`);
+        const barra = el("progress", { max: String(lista.length || 1), value: String(enviados) });
+        if (pos >= fila.length) {
+          sequenciaAtiva = null;
+          caixa.replaceChildren(barra, status,
+            el("div", { class: "seq-fim" }, pulados.length ? `Fim da lista — ${pulados.length} pulado(s).` : "✓ Pronto! Todos receberam."),
+            el("div", { class: "linha" },
+              pulados.length ? el("button", { class: "botao-zap", onclick: () => { fila.splice(0, fila.length, ...pulados.splice(0)); pos = 0; desenhar(); } }, "Enviar para os pulados") : null,
+              el("button", { onclick: fechar }, "Fechar")));
+          return;
+        }
+        const c = fila[pos];
+        const enviar = el("button", { class: "botao-zap", onclick: async () => {
+          enviar.disabled = true;
+          await enviarWhatsapp(c, texto(c), campanha, modo);
+          c.enviado_em = Date.now() / 1000;
+          if (aoEnviar) aoEnviar(c);
+          pos += 1;
+          desenhar();
+        } }, `Abrir conversa com ${c.nome.split(" ")[0]} ⏎`);
+        caixa.replaceChildren(barra, status,
+          el("div", { class: "seq-proximo" }, "Próximo: ", el("strong", {}, c.nome), " · ", c.telefone_formatado),
+          el("div", { class: "linha" }, enviar,
+            el("button", { onclick: () => { pulados.push(c); pos += 1; desenhar(); } }, "Pular"),
+            el("button", { onclick: fechar }, "Parar")),
+          dicaModo ? el("p", { class: "dica" }, dicaModo) : null);
+        sequenciaAtiva = enviar;
+        enviar.focus();
+      }
+      alvo.replaceChildren(caixa);
+      desenhar();
+      caixa.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    // Enter manda para o próximo mesmo se o foco saiu do botão (ao voltar do WhatsApp)
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || !sequenciaAtiva || sequenciaAtiva.disabled || document.querySelector("dialog[open]")) return;
+      if (e.target.closest && e.target.closest("input, textarea, select, button")) return;
+      e.preventDefault();
+      sequenciaAtiva.click();
+    });
+
     async function carregarAniversarios() {
       const r = await api("GET", "/api/aniversariantes?dias=7");
       const campanha = "aniversario-" + new Date().getFullYear();
@@ -316,14 +371,24 @@
                 carregarAniversarios();
               } }, "Enviar parabéns no WhatsApp"))))))
         : el("div", { class: "vazio" }, "Nenhum aniversariante nos próximos 7 dias."));
+      const pendentesHoje = r.aniversariantes.filter((c) => c.faltam_dias === 0 && c.aceita_mensagens && !c.parabens_enviado);
+      if (!$("seq-aniversario").querySelector(".sequencia")) {
+        $("seq-aniversario").replaceChildren(pendentesHoje.length > 1
+          ? el("button", { class: "botao-zap", onclick: () => iniciarSequencia($("seq-aniversario"), pendentesHoje, {
+            texto: (c) => preencherMensagem(r.mensagem, c, r.loja), campanha, modo: r.whatsapp_abrir_em,
+            aoEnviar: () => carregarAniversarios(), aoFechar: () => carregarAniversarios(),
+          }) }, `🎂 Enviar parabéns para os ${pendentesHoje.length} aniversariantes de hoje, um após o outro`)
+          : "");
+      }
     }
 
     // Campanha
     let publicosCarregados = false;
     async function prepararCampanha() {
       if (publicosCarregados) return;
-      const { publicos } = await api("GET", "/api/campanhas/publicos");
+      const { publicos, whatsapp_abrir_em } = await api("GET", "/api/campanhas/publicos");
       $("camp-publico").replaceChildren(...Object.entries(publicos).map(([k, v]) => el("option", { value: k }, v)));
+      $("camp-modo").value = whatsapp_abrir_em;
       publicosCarregados = true;
     }
     function atualizarPrevia() {
@@ -332,37 +397,67 @@
     }
     $("camp-texto").addEventListener("input", atualizarPrevia);
 
-    $("camp-montar").addEventListener("click", async () => {
+    async function dadosCampanha() {
+      if (!$("camp-nome").value.trim()) $("camp-nome").value = "Mensagem de " + new Date().toLocaleDateString("pt-BR");
       const campanha = $("camp-nome").value.trim();
+      const r = await api("GET", `/api/campanhas/publico?publico=${$("camp-publico").value}&campanha=${encodeURIComponent(campanha)}`);
+      return { campanha, ...r };
+    }
+
+    $("camp-montar").addEventListener("click", async () => {
       const texto = $("camp-texto").value.trim();
-      if (!texto) { aviso("Escreva a mensagem", "erro"); return; }
+      if (!texto) { aviso("Escreva a mensagem", "erro"); $("camp-texto").focus(); return; }
       let r;
+      try { r = await dadosCampanha(); } catch (e) { aviso(e.message, "erro"); return; }
+      const { campanha, clientes: lista } = r;
+      const modo = $("camp-modo").value;
+      if (!lista.length) {
+        $("camp-lista").replaceChildren(el("div", { class: "vazio" }, "Nenhum cliente desse público autorizou receber mensagens."));
+        return;
+      }
+      const textoDe = (c) => preencherMensagem(texto, c, r.loja);
+      const linhas = new Map();
+      const tabela = el("table", { class: "tabela" }, el("tbody", {}, lista.map((c) => {
+        const quando = el("td", {}, c.enviado_em ? "✓ enviado em " + dataHora(c.enviado_em) : "");
+        const botao = el("button", { onclick: async () => {
+          await enviarWhatsapp(c, textoDe(c), campanha, modo);
+          c.enviado_em = Date.now() / 1000;
+          marcar(c);
+        } }, c.enviado_em ? "Enviar de novo" : "Abrir no WhatsApp");
+        const linha = el("tr", { class: c.enviado_em ? "enviado" : "" },
+          el("td", {}, el("strong", {}, c.nome), el("div", { class: "dica" }, c.telefone_formatado)), quando, el("td", { class: "acoes" }, botao));
+        linhas.set(c.id, { linha, quando, botao });
+        return linha;
+      })));
+      function marcar(c) {
+        const l = linhas.get(c.id);
+        l.linha.classList.add("enviado");
+        l.quando.textContent = "✓ enviado em " + dataHora(c.enviado_em);
+        l.botao.textContent = "Enviar de novo";
+      }
+      const sequencia = el("div");
+      $("camp-lista").replaceChildren(sequencia,
+        el("details", {}, el("summary", {}, `Ver a lista completa (${lista.length} clientes)`), tabela));
+      if (lista.every((c) => c.enviado_em)) {
+        sequencia.replaceChildren(el("p", { class: "progresso-campanha" }, `Todos os ${lista.length} clientes já receberam esta campanha. Para mandar de novo, use a lista abaixo ou dê outro nome à campanha.`));
+      } else {
+        iniciarSequencia(sequencia, lista, { texto: textoDe, campanha, modo, aoEnviar: marcar });
+      }
+    });
+
+    $("camp-vcf").addEventListener("click", () => {
+      location.href = `/api/campanhas/contatos.vcf?publico=${$("camp-publico").value}&campanha=contatos`;
+    });
+    $("camp-marcar-todos").addEventListener("click", async () => {
       try {
-        r = await api("GET", `/api/campanhas/publico?publico=${$("camp-publico").value}&campanha=${encodeURIComponent(campanha)}`);
-      } catch (e) { aviso(e.message, "erro"); return; }
-      const lista = r.clientes;
-      const progresso = el("div", { class: "progresso-campanha" });
-      const atualizar = () => {
-        const enviados = lista.filter((c) => c.enviado_em).length;
-        progresso.textContent = `${enviados} de ${lista.length} enviados nesta campanha`;
-      };
-      atualizar();
-      $("camp-lista").replaceChildren(progresso, lista.length
-        ? el("table", { class: "tabela" }, el("tbody", {}, lista.map((c) => {
-          const linha = el("tr", { class: c.enviado_em ? "enviado" : "" });
-          const botao = el("button", { class: "botao-zap", onclick: async () => {
-            await enviarWhatsapp(c, preencherMensagem(texto, c, r.loja), campanha, r.whatsapp_abrir_em);
-            c.enviado_em = Date.now() / 1000;
-            linha.classList.add("enviado");
-            botao.textContent = "Enviar de novo";
-            atualizar();
-          } }, c.enviado_em ? "Enviar de novo" : "Abrir no WhatsApp");
-          linha.append(el("td", {}, el("strong", {}, c.nome), el("div", { class: "dica" }, c.telefone_formatado)),
-            el("td", {}, c.enviado_em ? "✓ enviado em " + dataHora(c.enviado_em) : ""),
-            el("td", { class: "acoes" }, botao));
-          return linha;
-        })))
-        : el("div", { class: "vazio" }, "Nenhum cliente desse público autorizou receber mensagens."));
+        const r = await dadosCampanha();
+        const ids = r.clientes.filter((c) => !c.enviado_em).map((c) => c.id);
+        if (!ids.length) { aviso(r.clientes.length ? "Todos desse público já estão marcados nesta campanha" : "Nenhum cliente nesse público", "ok"); return; }
+        if (!confirm(`Marcar ${ids.length} cliente(s) como "já recebeu" a campanha "${r.campanha}"?`)) return;
+        const res = await api("POST", "/api/mensagens/lote", { cliente_ids: ids, campanha: r.campanha, texto: $("camp-texto").value.trim() });
+        aviso(`${res.marcados} cliente(s) marcados como enviados`, "ok");
+        $("camp-lista").replaceChildren();
+      } catch (e) { aviso(e.message, "erro"); }
     });
 
     // Lista de clientes

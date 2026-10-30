@@ -136,24 +136,49 @@
     <section id="aba-clientes" class="aba" hidden>
       <div class="cartao">
         <h2>🎂 Aniversariantes (hoje e próximos 7 dias)</h2>
+        <div id="seq-aniversario"></div>
         <div id="lista-aniversarios"></div>
       </div>
 
       <div class="cartao">
         <h2>Enviar mensagem pelo WhatsApp</h2>
-        <p class="dica">Monte a mensagem, escolha para quem, e clique em "Abrir no WhatsApp" em cada cliente: a conversa abre com o
-          texto pronto e você só aperta enviar. Só entram clientes que <strong>autorizaram</strong> receber mensagens (LGPD).
-          Envie com moderação — o WhatsApp pode bloquear números que mandam muitas mensagens seguidas para quem não tem o
-          seu contato salvo. Precisa de internet só neste momento do envio.</p>
+        <p class="dica">Escreva a mensagem, escolha para quem e clique em <strong>Começar envio</strong>. O sistema abre a conversa
+          de um cliente por vez com o texto pronto: você aperta enviar no WhatsApp, volta aqui e aperta <strong>Enter</strong>
+          para ir ao próximo. Só entram clientes que <strong>autorizaram</strong> receber mensagens (LGPD). Precisa de internet
+          só neste momento do envio.</p>
         <div class="grade-form">
-          <div><label for="camp-nome">Nome da campanha (para saber quem já recebeu)</label><input id="camp-nome" maxlength="60" placeholder="Ex.: Promoção de sexta"></div>
           <div><label for="camp-publico">Para quem</label><select id="camp-publico"></select></div>
+          <div><label for="camp-modo">Abrir no</label>
+            <select id="camp-modo">
+              <option value="app">Aplicativo WhatsApp do PC (mais rápido)</option>
+              <option value="web">WhatsApp Web (no navegador)</option>
+              <option value="link">Link wa.me (celular/tablet)</option>
+            </select></div>
+          <div><label for="camp-nome">Nome da campanha (opcional)</label><input id="camp-nome" maxlength="60" placeholder="Ex.: Promoção de sexta"></div>
         </div>
         <label for="camp-texto">Mensagem — use {nome} para o primeiro nome do cliente e {loja} para o nome do estabelecimento</label>
         <textarea id="camp-texto" rows="4" maxlength="1500" placeholder="Olá, {nome}! Nesta sexta tem chopp em dobro no {loja}. Esperamos você!"></textarea>
         <p class="dica" id="camp-previa"></p>
-        <div class="acoes-form"><button id="camp-montar" class="primario">Montar lista de envio</button></div>
+        <div class="acoes-form"><button id="camp-montar" class="primario">▶ Começar envio</button></div>
         <div id="camp-lista"></div>
+        <details class="transmissao">
+          <summary>Muitos clientes? Mande para todos de uma vez pela <strong>lista de transmissão</strong> do WhatsApp</summary>
+          <ol>
+            <li>Clique em <strong>Baixar contatos</strong> e passe o arquivo para o celular da loja (pelo próprio WhatsApp, e-mail ou cabo).
+              Abra o arquivo no celular e escolha <em>importar contatos</em>.</li>
+            <li>No WhatsApp (ou WhatsApp Business) do celular: <em>⋮ → Nova transmissão</em>, marque os clientes (até 256 por lista) e crie a lista.
+              A lista fica salva: nas próximas promoções é só usar de novo.</li>
+            <li>Escreva a mensagem uma vez só e envie. Ela chega para todos, cada um no privado.</li>
+            <li>Volte aqui e clique em <strong>Marcar todos como enviados</strong>, para o histórico ficar certo.</li>
+          </ol>
+          <p class="dica">Na transmissão a mensagem é igual para todos (o {nome} não é trocado) e só chega para quem
+            <strong>também tem o número da loja salvo</strong> — peça para o cliente salvar o contato na hora do cadastro.
+            É o jeito oficial do WhatsApp de mandar para muita gente sem risco de bloqueio.</p>
+          <div class="linha">
+            <button id="camp-vcf">⬇ Baixar contatos (.vcf)</button>
+            <button id="camp-marcar-todos">✓ Marcar todos como enviados</button>
+          </div>
+        </details>
       </div>
 
       <div class="cartao">
