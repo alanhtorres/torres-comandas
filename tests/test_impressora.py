@@ -18,13 +18,25 @@ PEDIDO = {
 
 def test_cupom_cozinha_tem_comandos_escpos_e_acentos_cp850():
     dados = impressora.cupom_cozinha(PEDIDO, "Lanchonete São João", colunas=48, codificacao="cp850")
-    assert dados.startswith(impressora.INICIAR + b"\x1bt\x02")
+    assert dados.startswith(impressora.INICIAR + impressora.FORMATO_PADRAO + b"\x1bt\x02")
     assert dados.endswith(impressora.CORTAR)
     assert "Conceição".encode("cp850") in dados
     assert "São João".encode("cp850") in dados
     assert b"No 42" in dados
     assert b"sem cebola" in dados
     assert "alérgico".encode("cp850") in dados
+
+
+def test_cozinha_e_bar_saem_no_mesmo_formato():
+    pedido = {**PEDIDO, "itens": [
+        {"nome": "X-Burger", "quantidade": 1, "preco_centavos": 2500, "observacao": "", "setor": "cozinha"},
+        {"nome": "X-Burger", "quantidade": 1, "preco_centavos": 2500, "observacao": "", "setor": "bar"},
+    ]}
+    cozinha = impressora.cupom_cozinha(pedido, "Loja")
+    bar = impressora.cupom_cozinha(pedido, "Loja", setor="bar")
+    # fonte A forçada (não depende do padrão gravado em cada impressora)
+    assert impressora.ESC + b"M\x00" in cozinha
+    assert cozinha.replace(b"COZINHA", b"BAR") == bar
 
 
 def test_cupom_sem_acentos():

@@ -25,8 +25,14 @@ NEGRITO_ON = ESC + b"E\x01"
 NEGRITO_OFF = ESC + b"E\x00"
 ALINHAR_ESQ = ESC + b"a\x00"
 ALINHAR_CENTRO = ESC + b"a\x01"
-TAMANHO_NORMAL = GS + b"!\x00"
-TAMANHO_DUPLO = GS + b"!\x11"      # dobro da largura e da altura
+# O tamanho vai pelos dois comandos (ESC ! e GS !): cada modelo entende um, e
+# assim todas as impressoras imprimem do mesmo jeito.
+TAMANHO_NORMAL = ESC + b"!\x00" + GS + b"!\x00"
+TAMANHO_DUPLO = ESC + b"!\x30" + GS + b"!\x11"      # dobro da largura e da altura
+# Cada impressora guarda a sua fonte/espaçamento padrão (muitas vêm com a
+# fonte B, pequena). Isso força o mesmo formato em todas: fonte A, sem
+# espaço extra entre letras e espaçamento de linha normal.
+FORMATO_PADRAO = ESC + b"M\x00" + ESC + b" \x00" + ESC + b"2" + TAMANHO_NORMAL
 CORTAR = GS + b"V\x42\x03"         # avança um pouco e corta (corte parcial)
 
 # Tabela de caracteres (comando ESC t n) de cada codificação suportada.
@@ -51,7 +57,7 @@ class Cupom:
     def __init__(self, colunas: int = 48, codificacao: str = "cp850"):
         self.colunas = colunas
         self.codificacao = codificacao if codificacao in CODIFICACOES else "cp850"
-        self.dados = bytearray(INICIAR)
+        self.dados = bytearray(INICIAR + FORMATO_PADRAO)
         tabela = CODIFICACOES[self.codificacao]
         if tabela is not None:
             self.dados += ESC + b"t" + bytes([tabela])
