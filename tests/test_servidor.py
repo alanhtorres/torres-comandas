@@ -525,6 +525,16 @@ def test_caixa_pode_abrir_comanda(ambiente, admin):
     assert b'id="abrir-comanda"' not in entrar(app, "edu").get("/caixa").data
 
 
+def test_modo_claro(ambiente, admin):
+    app, banco, _ = ambiente
+    assert b'data-tema="escuro"' in admin.get("/caixa").data
+    assert admin.put("/api/config", json={"tema_padrao": "rosa"}).status_code == 400
+    assert admin.put("/api/config", json={"tema_padrao": "claro"}).status_code == 200
+    for tela in ("/caixa", "/cozinha", "/admin", "/comandas", "/"):
+        assert b'data-tema="claro"' in admin.get(tela).data, tela
+    assert b'data-tema="claro"' in app.test_client().get("/login").data
+
+
 def test_categoria_cozinha_pela_api(admin):
     admin.post("/api/produtos", json={"nome": "Coca", "preco_centavos": 600, "categoria": "Bebidas"})
     r = admin.post("/api/produtos/categoria-cozinha", json={"categoria": "Bebidas", "vai_cozinha": False})

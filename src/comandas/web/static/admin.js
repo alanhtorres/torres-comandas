@@ -311,8 +311,13 @@
     $("form-config").addEventListener("submit", async (e) => {
       e.preventDefault();
       try {
+        const temaAntes = document.documentElement.dataset.tema;
         await salvarConfig();
         aviso("Configurações salvas", "ok");
+        // Novo tema padrão: já mostra aqui (se este aparelho não escolheu o seu no botão do topo).
+        let temaDoAparelho = null;
+        try { temaDoAparelho = localStorage.getItem("tema"); } catch (e) { /* sem armazenamento */ }
+        if (!temaDoAparelho && $("cfg-tema_padrao").value !== temaAntes) setTimeout(() => location.reload(), 600);
       } catch (err) {
         aviso(err.message, "erro");
       }

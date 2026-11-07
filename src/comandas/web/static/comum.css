@@ -167,3 +167,66 @@ dialog.dialogo h2 { margin: 0 0 12px; font-size: 1.2rem; }
 .consentimento { margin-top: 14px; font-size: 0.9rem; align-items: flex-start; }
 .consentimento input { margin-top: 3px; }
 .etiqueta.aniversario { background: #831843; color: #fbcfe8; }
+
+/* Botão ☀️/🌙 do topo: troca o tema só neste aparelho. */
+.botao-tema { background: transparent; border: 1px solid var(--borda); padding: 6px 10px; font-size: 0.85rem; color: var(--texto-2); }
+
+/* --- Modo claro ---------------------------------------------------------------
+   Escolhido em Administração → Configurações (padrão de todas as telas) ou no
+   botão ☀️ do topo (só naquele aparelho). As cores de cada tela que não vêm das
+   variáveis acima também são trocadas aqui, para ficar tudo num lugar só. */
+:root[data-tema="claro"] {
+  --fundo: #eef2f7;
+  --painel: #ffffff;
+  --painel-2: #e2e8f0;
+  --borda: #cbd5e1;
+  --texto: #0f172a;
+  --texto-2: #475569;
+  --destaque: #0369a1;
+  --verde: #16a34a;
+  --amarelo: #d97706;
+  --vermelho: #dc2626;
+  --roxo: #7c3aed;
+  color-scheme: light;
+}
+:root[data-tema="claro"] button:hover { filter: brightness(0.95); }
+:root[data-tema="claro"] button.primario,
+:root[data-tema="claro"] .chips button.ativo,
+:root[data-tema="claro"] .grade-mesas button.ativa,
+:root[data-tema="claro"] .grade-comandas button.ativa,
+:root[data-tema="claro"] .grade-comandas button.ativa small,
+:root[data-tema="claro"] .qtd button.mais { color: #fff; }
+:root[data-tema="claro"] button.verde { color: #fff; }
+:root[data-tema="claro"] button.perigo { background: #fee2e2; color: #991b1b; }
+:root[data-tema="claro"] input, :root[data-tema="claro"] select, :root[data-tema="claro"] textarea { background: #fff; }
+:root[data-tema="claro"] .etiqueta.novo { background: #dbeafe; color: #1e3a8a; }
+:root[data-tema="claro"] .etiqueta.preparando,
+:root[data-tema="claro"] .etiqueta.a-receber { background: #fef3c7; color: #92400e; }
+:root[data-tema="claro"] .etiqueta.pronto,
+:root[data-tema="claro"] .etiqueta.pago { background: #dcfce7; color: #166534; }
+:root[data-tema="claro"] .etiqueta.chamado { background: #ede9fe; color: #5b21b6; }
+:root[data-tema="claro"] .etiqueta.qrcode { background: #cffafe; color: #155e75; }
+:root[data-tema="claro"] .etiqueta.erro { background: #fee2e2; color: #991b1b; }
+:root[data-tema="claro"] .etiqueta.aniversario { background: #fce7f3; color: #9d174d; }
+:root[data-tema="claro"] #aviso-flutuante { background: #0f172a; color: #f8fafc; border-color: #0f172a; }
+:root[data-tema="claro"] #aviso-flutuante.erro { background: #991b1b; color: #fff; }
+:root[data-tema="claro"] #aviso-flutuante.ok { background: #166534; color: #fff; }
+:root[data-tema="claro"] dialog.dialogo::backdrop { background: rgba(15, 23, 42, 0.45); }
+:root[data-tema="claro"] .erro-dialogo, :root[data-tema="claro"] .erro { color: #991b1b; background: #fee2e2; }
+:root[data-tema="claro"] .positivo, :root[data-tema="claro"] .barra-caixa .aberto { color: #15803d; }
+:root[data-tema="claro"] .negativo, :root[data-tema="claro"] .barra-caixa .fechado { color: #b91c1c; }
+/* caixa */
+:root[data-tema="claro"] .pedido.pronto { background: #f0fdf4; }
+:root[data-tema="claro"] .barra-caixa { background: #e2e8f0; }
+/* cozinha */
+:root[data-tema="claro"] .ticket.atrasado .cabeca { background: #fed7aa; }
+:root[data-tema="claro"] .ticket.muito-atrasado .cabeca { background: #fecaca; animation-name: piscar-claro; }
+@keyframes piscar-claro { 50% { background: #f87171; } }
+:root[data-tema="claro"] .ticket li .obs { color: #b45309; }
+:root[data-tema="claro"] .ticket .obs-geral { background: #fef3c7; color: #78350f; }
+/* garçom */
+:root[data-tema="claro"] #alertas:not(:empty) { background: rgba(238, 242, 247, 0.92); }
+/* comandas */
+:root[data-tema="claro"] .aviso-desligado { color: #92400e; }
+:root[data-tema="claro"] #aniversariantes { background: #fdf2f8; border-color: #f472b6; color: #831843; }
+:root[data-tema="claro"] #aniversariantes .pessoa { background: #fce7f3; }

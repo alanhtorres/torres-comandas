@@ -169,6 +169,14 @@ Excel** (uma aba por assunto, com valores e datas de verdade para somar e filtra
 O arquivo é gerado no próprio PC e baixa sozinho. Histórico e clientes só aparecem
 para quem tem essas permissões.
 
+## Modo claro
+
+As telas da equipe (caixa, cozinha, garçom, comandas, administração) podem ficar no
+**modo claro** — fundo branco, mais fácil de ler em ambiente iluminado. O padrão de
+todos os aparelhos é escolhido em Administração → Configurações → Estabelecimento;
+cada aparelho ainda pode trocar só para ele no botão **☀️ Claro / 🌙 Escuro** do topo.
+O cardápio do QR code já é claro e o painel da TV continua escuro.
+
 ## Impressoras
 
 Impressoras térmicas no padrão ESC/POS — Epson, Elgin, Bematech, Tanca, Daruma e

@@ -120,7 +120,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
 
     @app.context_processor
     def contexto_templates():
-        return {"usuario": usuario_atual(), "pode": pode, "loja": banco.config()["nome_loja"]}
+        cfg = banco.config()
+        return {"usuario": usuario_atual(), "pode": pode, "loja": cfg["nome_loja"], "tema": cfg["tema_padrao"]}
 
     # --- Login ---------------------------------------------------------------
 

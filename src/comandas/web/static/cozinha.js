@@ -40,7 +40,9 @@
         const classe = "ticket " + p.status + (min >= 20 ? " muito-atrasado" : min >= 10 ? " atrasado" : "");
         const origem = [{ qrcode: "QR code", garcom: "Garçom " + (p.usuario_nome || "") }[p.origem] || "Caixa",
           p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean).join(" · ");
-        const outros = p.itens.filter((i) => !i.vai_cozinha);
+        const lista = (itens) => itens.map((i) => i.quantidade + "× " + i.nome).join(", ");
+        const doBar = p.itens.filter((i) => i.setor === "bar");
+        const prontos = p.itens.filter((i) => !i.vai_cozinha && i.setor !== "bar");
         return el("article", { class: classe },
           el("div", { class: "cabeca" },
             el("span", { class: "numero" }, "#" + p.codigo),
@@ -50,7 +52,8 @@
             el("span", { class: "qtd" }, i.quantidade + "×"), i.nome,
             i.observacao ? el("span", { class: "obs" }, "» " + i.observacao) : null))),
           p.observacao ? el("div", { class: "obs-geral" }, "⚠ " + p.observacao) : null,
-          outros.length ? el("div", { class: "outros-itens" }, "Sai pelo caixa: " + outros.map((i) => i.quantidade + "× " + i.nome).join(", ")) : null,
+          doBar.length ? el("div", { class: "outros-itens" }, "Sai no bar: " + lista(doBar)) : null,
+          prontos.length ? el("div", { class: "outros-itens" }, "Sai pelo caixa: " + lista(prontos)) : null,
           el("div", { class: "acoes" },
             p.status === "novo" ? el("button", { class: "amarelo", onclick: () => mudar(p, "preparando") }, "Iniciar preparo") : null,
             el("button", { class: "verde", onclick: () => mudar(p, "pronto") }, "✓ Pronto")));

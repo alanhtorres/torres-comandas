@@ -325,6 +325,31 @@
     cancelado: "Cancelado",
   };
 
+  // --- Tema claro/escuro ------------------------------------------------------
+  // O padrão vem da Administração (atributo data-tema do <html>); o botão do
+  // topo troca só neste aparelho e fica guardado no navegador.
+
+  function botaoTema() {
+    const topo = document.querySelector(".topo");
+    if (!topo) return;
+    const raiz = document.documentElement;
+    const botao = el("button", { type: "button", class: "botao-tema" });
+    const rotular = () => {
+      const claro = raiz.dataset.tema === "claro";
+      botao.textContent = claro ? "🌙 Escuro" : "☀️ Claro";
+      botao.title = claro ? "Usar o modo escuro neste aparelho" : "Usar o modo claro neste aparelho (mais fácil de ler)";
+    };
+    botao.addEventListener("click", () => {
+      raiz.dataset.tema = raiz.dataset.tema === "claro" ? "escuro" : "claro";
+      try { localStorage.setItem("tema", raiz.dataset.tema); } catch (e) { /* navegador sem armazenamento: vale só nesta página */ }
+      rotular();
+    });
+    rotular();
+    const nav = topo.querySelector("nav");
+    if (nav) topo.insertBefore(botao, nav); else topo.append(botao);
+  }
+  botaoTema();
+
   window.C = { api, moeda, el, minutosDesde, hora, dataHora, hojeISO, aviso, bip, falar, somLiberado, liberarSom, acompanhar,
     centavos, reais, campoDinheiro, dialogo, STATUS_NOME, mascaraTelefone, mascaraCpf, formCliente,
     preencherMensagem, abrirWhatsapp };

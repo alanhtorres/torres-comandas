@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-tema="{{ tema }}">
 <head>
   <meta charset="utf-8">
   <title>Administração — Torres Comandas</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <script>/* tema escolhido neste aparelho (botão ☀️/🌙) vale mais que o padrão */try{var t=localStorage.getItem("tema");if(t==="claro"||t==="escuro")document.documentElement.dataset.tema=t}catch(e){}</script>
   <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
 </head>
 <body>
@@ -238,6 +239,13 @@
           <input id="cfg-url_base" name="url_base" placeholder="">
           <p class="dica">Deixe vazio para detectar sozinho. Recomendado: reserve um IP fixo para este PC no roteador e
             preencha aqui (ex.: http://192.168.0.10:8090) — assim os QR codes impressos nunca mudam.</p>
+          <label for="cfg-tema_padrao">Cores das telas da equipe (caixa, cozinha, garçom, comandas, administração)</label>
+          <select id="cfg-tema_padrao" name="tema_padrao">
+            <option value="escuro">Modo escuro</option>
+            <option value="claro">Modo claro (fundo branco, mais fácil de ler no claro)</option>
+          </select>
+          <p class="dica">Vale para todos os aparelhos. Cada aparelho ainda pode trocar só para ele no botão ☀️ Claro / 🌙 Escuro
+            do topo da tela. O cardápio do QR code já é claro e o painel da TV continua escuro.</p>
         </div>
 
         <div class="cartao">

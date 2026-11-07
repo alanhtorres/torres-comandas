@@ -35,6 +35,9 @@ CONFIG_PADRAO = {
     "mostrar_nome_cliente_painel": True,
     # Sugestão do botão "taxa de serviço" na hora de receber (0 = esconde).
     "taxa_servico_percentual": 10,
+    # Cores das telas da equipe: "escuro" ou "claro". Cada aparelho ainda
+    # pode trocar só para ele no botão ☀️/🌙 do topo.
+    "tema_padrao": "escuro",
     # Cada impressora é "rede" (IP e porta) ou "usb" (instalada no Windows
     # deste PC, escolhida pelo nome).
     "impressora_cozinha_ativa": False,
@@ -550,6 +553,8 @@ class Banco:
                     valor = "" if valor is None else str(valor).strip()
                 if chave.startswith("impressora_") and chave.endswith("_tipo") and valor not in ("rede", "usb"):
                     raise ErroNegocio("Tipo de impressora inválido (rede ou USB).")
+                if chave == "tema_padrao" and valor not in ("escuro", "claro"):
+                    raise ErroNegocio("Tema inválido (escuro ou claro).")
                 self.conn.execute(
                     "INSERT INTO config (chave, valor) VALUES (?, ?) "
                     "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
