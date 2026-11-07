@@ -35,13 +35,25 @@ CONFIG_PADRAO = {
     "mostrar_nome_cliente_painel": True,
     # Sugestão do botão "taxa de serviço" na hora de receber (0 = esconde).
     "taxa_servico_percentual": 10,
+    # Cada impressora é "rede" (IP e porta) ou "usb" (instalada no Windows
+    # deste PC, escolhida pelo nome).
     "impressora_cozinha_ativa": False,
+    "impressora_cozinha_tipo": "rede",
     "impressora_cozinha_host": "",
     "impressora_cozinha_porta": 9100,
+    "impressora_cozinha_usb": "",
+    # Impressora do bar: os produtos com destino "bar" (bebidas, drinks...).
+    "impressora_bar_ativa": False,
+    "impressora_bar_tipo": "rede",
+    "impressora_bar_host": "",
+    "impressora_bar_porta": 9100,
+    "impressora_bar_usb": "",
     # Impressora do caixa: conferência de conta e fechamento de caixa.
     "impressora_caixa_ativa": False,
+    "impressora_caixa_tipo": "rede",
     "impressora_caixa_host": "",
     "impressora_caixa_porta": 9100,
+    "impressora_caixa_usb": "",
     # 48 colunas = bobina de 80 mm; 32 colunas = bobina de 58 mm.
     "impressora_colunas": 48,
     "impressora_codificacao": "cp850",
@@ -290,9 +302,13 @@ COLUNAS_NOVAS = {
         # Produto que precisa de preparo: aparece na cozinha e sai na
         # impressora dela. Bebidas em lata, chips etc. vão direto do caixa.
         "vai_cozinha": "INTEGER NOT NULL DEFAULT 1",
+        # Onde o produto sai: "cozinha", "bar" ou "nenhum" (vazio = bancos
+        # de antes do bar, que seguem o vai_cozinha). Ver setor_do_item().
+        "destino": "TEXT NOT NULL DEFAULT ''",
     },
     "pedido_itens": {
         "vai_cozinha": "INTEGER NOT NULL DEFAULT 1",
+        "setor": "TEXT NOT NULL DEFAULT ''",
     },
     "pedidos": {
         "usuario_id": "INTEGER",
@@ -307,6 +323,20 @@ COLUNAS_NOVAS = {
 
 class ErroNegocio(Exception):
     """Erro de regra de negócio, com mensagem pronta pra mostrar ao usuário."""
+
+
+# Onde cada produto sai: na cozinha (tela e impressora da cozinha), no bar
+# (impressora do bar) ou em nenhum lugar (já pronto: sai direto do caixa).
+DESTINOS = {"cozinha": "Cozinha", "bar": "Bar", "nenhum": "Não imprime (já pronto)"}
+
+
+def setor_do_item(item: dict) -> str:
+    """Destino de um produto ou item de pedido. Os gravados antes do bar
+    existir não têm destino e seguem o "vai para a cozinha"."""
+    destino = item.get("destino") or item.get("setor")
+    if destino in DESTINOS:
+        return destino
+    return "cozinha" if item.get("vai_cozinha", True) else "nenhum"
 
 
 def _centavos(valor, nome: str, permitir_zero: bool = True) -> int:
@@ -518,6 +548,8 @@ class Banco:
                         raise ErroNegocio(f"Valor inválido para '{chave}'.")
                 else:
                     valor = "" if valor is None else str(valor).strip()
+                if chave.startswith("impressora_") and chave.endswith("_tipo") and valor not in ("rede", "usb"):
+                    raise ErroNegocio("Tipo de impressora inválido (rede ou USB).")
                 self.conn.execute(
                     "INSERT INTO config (chave, valor) VALUES (?, ?) "
                     "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
@@ -680,6 +712,7 @@ class Banco:
         dados = dict(linha)
         dados["ativo"] = bool(dados["ativo"])
         dados["vai_cozinha"] = bool(dados["vai_cozinha"])
+        dados["destino"] = setor_do_item(dados)
         return dados
 
     def obter_produto(self, produto_id: int) -> Optional[dict]:
@@ -692,13 +725,17 @@ class Banco:
         nome = _texto(dados.get("nome"), 80)
         if not nome:
             raise ErroNegocio("Informe o nome do produto.")
+        if dados.get("destino") and dados["destino"] not in DESTINOS:
+            raise ErroNegocio("Destino do produto inválido.")
+        destino = setor_do_item({"destino": dados.get("destino"), "vai_cozinha": dados.get("vai_cozinha", True)})
         return {
             "nome": nome,
             "descricao": _texto(dados.get("descricao"), 200),
             "categoria": _texto(dados.get("categoria"), 40) or "Geral",
             "preco_centavos": _centavos(dados.get("preco_centavos", 0), "preço"),
             "ativo": 1 if dados.get("ativo", True) else 0,
-            "vai_cozinha": 1 if dados.get("vai_cozinha", True) else 0,
+            "vai_cozinha": 1 if destino == "cozinha" else 0,
+            "destino": destino,
             "ordem": int(dados.get("ordem") or 0),
         }
 
@@ -706,18 +743,22 @@ class Banco:
         valores = self._validar_produto(dados)
         with self._transacao():
             cur = self.conn.execute(
-                "INSERT INTO produtos (nome, descricao, categoria, preco_centavos, ativo, vai_cozinha, ordem) "
-                "VALUES (:nome, :descricao, :categoria, :preco_centavos, :ativo, :vai_cozinha, :ordem)",
+                "INSERT INTO produtos (nome, descricao, categoria, preco_centavos, ativo, vai_cozinha, destino, ordem) "
+                "VALUES (:nome, :descricao, :categoria, :preco_centavos, :ativo, :vai_cozinha, :destino, :ordem)",
                 valores,
             )
             self._registrar(por, "Cadastrou produto", f"{valores['nome']} — {moeda(valores['preco_centavos'])}"
-                            + ("" if valores["vai_cozinha"] else " (não vai para a cozinha)"))
+                            + {"cozinha": "", "bar": " (sai no bar)", "nenhum": " (não vai para a cozinha)"}[valores["destino"]])
         return self.obter_produto(cur.lastrowid)
 
     def atualizar_produto(self, produto_id: int, dados: dict, por: Optional[dict] = None) -> dict:
         atual = self.obter_produto(produto_id)
         if not atual:
             raise ErroNegocio("Produto não encontrado.")
+        dados = dict(dados)
+        if "vai_cozinha" in dados and "destino" not in dados:
+            # Botão antigo "Pôr/Tirar da cozinha".
+            dados["destino"] = "cozinha" if dados["vai_cozinha"] else "nenhum"
         valores = self._validar_produto({**atual, **dados})
         valores["id"] = produto_id
         mudancas = []
@@ -728,26 +769,32 @@ class Banco:
             mudancas.append(f"preço: {moeda(atual['preco_centavos'])} → {moeda(valores['preco_centavos'])}")
         if bool(valores["ativo"]) != atual["ativo"]:
             mudancas.append("disponível" if valores["ativo"] else "pausado (indisponível)")
-        if bool(valores["vai_cozinha"]) != atual["vai_cozinha"]:
-            mudancas.append("passa a ir para a cozinha" if valores["vai_cozinha"] else "não vai mais para a cozinha")
+        if valores["destino"] != atual["destino"]:
+            mudancas.append(f"sai em: {DESTINOS[atual['destino']]} → {DESTINOS[valores['destino']]}")
         with self._transacao():
             self.conn.execute(
                 "UPDATE produtos SET nome = :nome, descricao = :descricao, categoria = :categoria, "
-                "preco_centavos = :preco_centavos, ativo = :ativo, vai_cozinha = :vai_cozinha, ordem = :ordem WHERE id = :id",
+                "preco_centavos = :preco_centavos, ativo = :ativo, vai_cozinha = :vai_cozinha, destino = :destino, "
+                "ordem = :ordem WHERE id = :id",
                 valores,
             )
             if mudancas:
                 self._registrar(por, "Alterou produto", f"{atual['nome']}: " + "; ".join(mudancas))
         return self.obter_produto(produto_id)
 
-    def definir_cozinha_categoria(self, categoria: str, vai_cozinha: bool, por: Optional[dict] = None) -> int:
-        """Marca de uma vez todos os produtos da categoria (ex.: "Bebidas")."""
+    def definir_destino_categoria(self, categoria: str, destino: str, por: Optional[dict] = None) -> int:
+        """Escolhe de uma vez onde saem todos os produtos da categoria
+        (ex.: "Bebidas" → bar, "Lanches" → cozinha)."""
+        if destino not in DESTINOS:
+            raise ErroNegocio("Destino inválido.")
         with self._transacao():
-            cur = self.conn.execute("UPDATE produtos SET vai_cozinha = ? WHERE categoria = ?",
-                                    (1 if vai_cozinha else 0, categoria))
-            self._registrar(por, "Alterou categoria", f"{categoria}: "
-                            + ("todos os produtos vão para a cozinha" if vai_cozinha else "nenhum produto vai para a cozinha"))
+            cur = self.conn.execute("UPDATE produtos SET destino = ?, vai_cozinha = ? WHERE categoria = ?",
+                                    (destino, 1 if destino == "cozinha" else 0, categoria))
+            self._registrar(por, "Alterou categoria", f"{categoria}: todos os produtos saem em {DESTINOS[destino]}")
         return cur.rowcount
+
+    def definir_cozinha_categoria(self, categoria: str, vai_cozinha: bool, por: Optional[dict] = None) -> int:
+        return self.definir_destino_categoria(categoria, "cozinha" if vai_cozinha else "nenhum", por=por)
 
     def definir_foto_produto(self, produto_id: int, arquivo: Optional[str], por: Optional[dict] = None) -> None:
         produto = self.obter_produto(produto_id)
@@ -883,10 +930,10 @@ class Banco:
             pedido_id = cur.lastrowid
             for produto, quantidade, obs in linhas_itens:
                 self.conn.execute(
-                    "INSERT INTO pedido_itens (pedido_id, produto_id, nome, preco_centavos, quantidade, observacao, vai_cozinha) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO pedido_itens (pedido_id, produto_id, nome, preco_centavos, quantidade, observacao, "
+                    "vai_cozinha, setor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (pedido_id, produto["id"], produto["nome"], produto["preco_centavos"], quantidade, obs,
-                     1 if produto["vai_cozinha"] else 0),
+                     1 if produto["vai_cozinha"] else 0, produto["destino"]),
                 )
             resumo = ", ".join(f"{q}x {p['nome']}" for p, q, _ in linhas_itens)
             onde = (f" — comanda {comanda['numero']}" if comanda else "") + (f" — mesa {mesa}" if mesa else "")
@@ -905,12 +952,16 @@ class Banco:
             if pedido["comanda_id"]:
                 k = self.conn.execute("SELECT numero FROM comandas WHERE id = ?", (pedido["comanda_id"],)).fetchone()
                 pedido["comanda_numero"] = k["numero"] if k else None
-            pedido["itens"] = [
-                {**dict(i), "vai_cozinha": bool(i["vai_cozinha"])} for i in self.conn.execute(
-                    "SELECT produto_id, nome, preco_centavos, quantidade, observacao, vai_cozinha "
-                    "FROM pedido_itens WHERE pedido_id = ? ORDER BY id", (pedido_id,))
-            ]
+            pedido["itens"] = []
+            for i in self.conn.execute(
+                    "SELECT produto_id, nome, preco_centavos, quantidade, observacao, vai_cozinha, setor "
+                    "FROM pedido_itens WHERE pedido_id = ? ORDER BY id", (pedido_id,)):
+                item = {**dict(i), "vai_cozinha": bool(i["vai_cozinha"])}
+                item["setor"] = setor_do_item(item)
+                pedido["itens"].append(item)
             pedido["vai_cozinha"] = any(i["vai_cozinha"] for i in pedido["itens"])
+            # Ambientes que recebem este pedido (cada um na sua impressora).
+            pedido["setores"] = [s for s in ("cozinha", "bar") if any(i["setor"] == s for i in pedido["itens"])]
             return pedido
 
     def _exigir_pedido(self, pedido_id: int) -> dict:

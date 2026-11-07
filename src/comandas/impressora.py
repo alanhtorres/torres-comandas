@@ -1,14 +1,21 @@
-"""Impressão em impressora térmica de rede (ESC/POS, porta TCP "raw" 9100 —
-o padrão de praticamente todas as impressoras de cupom/cozinha com rede:
-Epson, Elgin, Bematech, Daruma, Tanca, genéricas chinesas...).
+"""Impressão em impressora térmica ESC/POS (Epson, Elgin, Bematech, Daruma,
+Tanca, genéricas chinesas...), de dois jeitos:
 
-Não precisa de driver nem de nada instalado no PC: os bytes vão direto pro
-IP da impressora."""
+- rede: porta TCP "raw" 9100. Não precisa de driver nem de nada instalado
+  no PC: os bytes vão direto pro IP da impressora.
+- USB: impressora instalada no Windows deste PC (com o driver do fabricante
+  ou "Generic / Text Only"). Os bytes vão "crus" (RAW) pelo spooler do
+  Windows, sem passar pelo driver gráfico."""
+import ctypes
 import socket
+import sys
 import unicodedata
 from datetime import datetime
 
-from .banco import moeda
+from .banco import moeda, setor_do_item
+
+# Ambientes que recebem os pedidos, cada um com a sua impressora.
+SETORES = {"cozinha": "COZINHA", "bar": "BAR"}
 
 ESC = b"\x1b"
 GS = b"\x1d"
@@ -88,9 +95,11 @@ def _hora(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M")
 
 
-def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: str = "cp850") -> bytes:
+def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: str = "cp850",
+                  setor: str = "cozinha") -> bytes:
+    """Cupom de preparo de um ambiente (cozinha ou bar): só os itens dele."""
     c = Cupom(colunas, codificacao)
-    c.cmd(ALINHAR_CENTRO).linha(nome_loja).linha("PEDIDO COZINHA")
+    c.cmd(ALINHAR_CENTRO).linha(nome_loja).linha(f"PEDIDO {SETORES.get(setor, setor.upper())}")
     c.cmd(TAMANHO_DUPLO + NEGRITO_ON).linha(f"No {pedido['codigo']}").cmd(TAMANHO_NORMAL + NEGRITO_OFF)
     c.cmd(ALINHAR_ESQ)
     origem = {"qrcode": "QR code", "caixa": "Caixa", "garcom": "Garcom"}.get(pedido["origem"], pedido["origem"])
@@ -106,8 +115,8 @@ def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: 
     c.separador()
     # Itens em fonte dupla: é o que o cozinheiro precisa ler de longe.
     largura_dupla = max(10, colunas // 2)
-    # Só o que precisa de preparo (bebida em lata, chips... saem pelo caixa).
-    for item in (i for i in pedido["itens"] if i.get("vai_cozinha", True)):
+    # Só o que é deste ambiente (o resto sai na impressora do outro, ou pelo caixa).
+    for item in (i for i in pedido["itens"] if setor_do_item(i) == setor):
         c.cmd(TAMANHO_DUPLO + NEGRITO_ON).quebrar(f"{item['quantidade']}x {item['nome']}", largura_dupla)
         c.cmd(TAMANHO_NORMAL + NEGRITO_OFF)
         if item.get("observacao"):
@@ -197,3 +206,87 @@ def enviar(host: str, porta: int, dados: bytes, timeout: float = 5.0) -> None:
             sock.sendall(dados)
     except OSError as exc:
         raise ErroImpressora(f"Não foi possível imprimir em {host}:{porta} ({exc}).") from exc
+
+
+# --- Impressora USB (instalada no Windows) --------------------------------------
+
+def _winspool():
+    from ctypes import wintypes
+
+    w = ctypes.WinDLL("winspool.drv", use_last_error=True)
+
+    class DOC_INFO_1(ctypes.Structure):
+        _fields_ = [("pDocName", wintypes.LPWSTR), ("pOutputFile", wintypes.LPWSTR), ("pDatatype", wintypes.LPWSTR)]
+
+    w.OpenPrinterW.argtypes = [wintypes.LPWSTR, ctypes.POINTER(wintypes.HANDLE), ctypes.c_void_p]
+    w.OpenPrinterW.restype = wintypes.BOOL
+    w.StartDocPrinterW.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(DOC_INFO_1)]
+    w.StartDocPrinterW.restype = wintypes.DWORD
+    for nome in ("StartPagePrinter", "EndPagePrinter", "EndDocPrinter", "ClosePrinter"):
+        getattr(w, nome).argtypes = [wintypes.HANDLE]
+        getattr(w, nome).restype = wintypes.BOOL
+    w.WritePrinter.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    w.WritePrinter.restype = wintypes.BOOL
+    w.EnumPrintersW.argtypes = [wintypes.DWORD, wintypes.LPWSTR, wintypes.DWORD, ctypes.c_void_p,
+                                wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD)]
+    w.EnumPrintersW.restype = wintypes.BOOL
+    return w, DOC_INFO_1
+
+
+def listar_impressoras_windows() -> list:
+    """Nomes das impressoras instaladas neste PC (vazio fora do Windows)."""
+    if sys.platform != "win32":
+        return []
+    from ctypes import wintypes
+
+    class PRINTER_INFO_4(ctypes.Structure):
+        _fields_ = [("pPrinterName", wintypes.LPWSTR), ("pServerName", wintypes.LPWSTR), ("Attributes", wintypes.DWORD)]
+
+    w, _ = _winspool()
+    flags = 0x2 | 0x4  # PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
+    precisa, quantas = wintypes.DWORD(0), wintypes.DWORD(0)
+    w.EnumPrintersW(flags, None, 4, None, 0, ctypes.byref(precisa), ctypes.byref(quantas))
+    if not precisa.value:
+        return []
+    buf = ctypes.create_string_buffer(precisa.value)
+    if not w.EnumPrintersW(flags, None, 4, buf, precisa, ctypes.byref(precisa), ctypes.byref(quantas)):
+        return []
+    lista = ctypes.cast(buf, ctypes.POINTER(PRINTER_INFO_4))
+    return sorted({lista[i].pPrinterName for i in range(quantas.value) if lista[i].pPrinterName}, key=str.lower)
+
+
+def enviar_windows(nome: str, dados: bytes) -> None:
+    """Manda os bytes ESC/POS "crus" para uma impressora do Windows (USB)."""
+    if not nome:
+        raise ErroImpressora("Impressora USB não escolhida.")
+    if sys.platform != "win32":
+        raise ErroImpressora("Impressora USB só funciona com o sistema rodando no Windows.")
+    from ctypes import wintypes
+
+    w, DOC_INFO_1 = _winspool()
+    handle = wintypes.HANDLE()
+    if not w.OpenPrinterW(nome, ctypes.byref(handle), None):
+        raise ErroImpressora(f"Impressora \"{nome}\" não encontrada neste PC ({ctypes.FormatError(ctypes.get_last_error())}).")
+    try:
+        doc = DOC_INFO_1("Torres Comandas", None, "RAW")
+        if not w.StartDocPrinterW(handle, 1, ctypes.byref(doc)):
+            raise ErroImpressora(f"Não foi possível imprimir em \"{nome}\" ({ctypes.FormatError(ctypes.get_last_error())}).")
+        try:
+            w.StartPagePrinter(handle)
+            escritos = wintypes.DWORD(0)
+            ok = w.WritePrinter(handle, dados, len(dados), ctypes.byref(escritos))
+            w.EndPagePrinter(handle)
+        finally:
+            w.EndDocPrinter(handle)
+        if not ok or escritos.value != len(dados):
+            raise ErroImpressora(f"Não foi possível imprimir em \"{nome}\" ({ctypes.FormatError(ctypes.get_last_error())}).")
+    finally:
+        w.ClosePrinter(handle)
+
+
+def enviar_para(cfg: dict, qual: str, dados: bytes) -> None:
+    """Imprime na impressora `qual` (cozinha, bar ou caixa) do jeito configurado."""
+    if cfg.get(f"impressora_{qual}_tipo") == "usb":
+        enviar_windows(cfg.get(f"impressora_{qual}_usb", ""), dados)
+    else:
+        enviar(cfg[f"impressora_{qual}_host"], cfg[f"impressora_{qual}_porta"], dados)

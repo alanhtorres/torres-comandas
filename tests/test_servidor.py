@@ -437,6 +437,94 @@ def test_itens_sem_preparo_nao_vao_para_a_impressora_da_cozinha(ambiente, admin,
     assert len(impressora_falsa.recebidos) == 1
 
 
+def _ligar_impressora(banco, qual, falsa):
+    banco.salvar_config({f"impressora_{qual}_ativa": True, f"impressora_{qual}_host": "127.0.0.1",
+                         f"impressora_{qual}_porta": falsa.porta})
+
+
+def test_bebidas_saem_na_impressora_do_bar(ambiente, admin, impressora_falsa):
+    from conftest import ImpressoraFalsa
+    _, banco, _ = ambiente
+    bar = ImpressoraFalsa()
+    try:
+        _ligar_impressora(banco, "cozinha", impressora_falsa)
+        _ligar_impressora(banco, "bar", bar)
+        burger = _produto(admin)
+        chopp = admin.post("/api/produtos", json={"nome": "Chopp", "preco_centavos": 1200, "categoria": "Bebidas"}).get_json()["produto"]
+        assert chopp["destino"] == "cozinha"  # padrão de sempre, até escolher a categoria
+        r = admin.post("/api/produtos/categoria-destino", json={"categoria": "Bebidas", "destino": "bar"})
+        assert r.get_json()["alterados"] == 1
+        assert admin.post("/api/produtos/categoria-destino", json={"categoria": "Bebidas", "destino": "x"}).status_code == 400
+
+        misto = admin.post("/api/pedidos", json={"itens": [{"produto_id": burger["id"]}, {"produto_id": chopp["id"]}]}).get_json()["pedido"]
+        assert misto["setores"] == ["cozinha", "bar"] and misto["impressao"] == "ok" and misto["status"] == "novo"
+        cupom_cozinha, cupom_bar = impressora_falsa.esperar()[0], bar.esperar()[0]
+        assert b"PEDIDO COZINHA" in cupom_cozinha and b"X-Burger" in cupom_cozinha and b"Chopp" not in cupom_cozinha
+        assert b"PEDIDO BAR" in cupom_bar and b"Chopp" in cupom_bar and b"X-Burger" not in cupom_bar
+
+        # Só bebida: não passa pela tela da cozinha, mas sai no bar.
+        so_bar = admin.post("/api/pedidos", json={"itens": [{"produto_id": chopp["id"]}]}).get_json()["pedido"]
+        assert so_bar["status"] == "pronto" and so_bar["vai_cozinha"] is False and so_bar["impressao"] == "ok"
+        assert len(bar.esperar(2)) == 2 and len(impressora_falsa.recebidos) == 1
+        assert admin.post(f"/api/pedidos/{so_bar['id']}/imprimir").status_code == 200
+        assert len(bar.esperar(3)) == 3 and len(impressora_falsa.recebidos) == 1
+
+        # Bar desligado: a cozinha continua imprimindo só a parte dela.
+        banco.salvar_config({"impressora_bar_ativa": False})
+        admin.post("/api/pedidos", json={"itens": [{"produto_id": burger["id"]}, {"produto_id": chopp["id"]}]})
+        assert len(impressora_falsa.esperar(2)) == 2 and len(bar.recebidos) == 3
+        r = admin.post(f"/api/pedidos/{so_bar['id']}/imprimir")
+        assert r.status_code == 400 and "do bar" in r.get_json()["erro"]
+    finally:
+        bar.fechar()
+
+
+def test_destino_por_produto_e_botao_antigo_da_cozinha(admin):
+    p = admin.post("/api/produtos", json={"nome": "Caipirinha", "preco_centavos": 1800, "destino": "bar"}).get_json()["produto"]
+    assert p["destino"] == "bar" and p["vai_cozinha"] is False
+    assert admin.post("/api/produtos", json={"nome": "X", "preco_centavos": 1, "destino": "garagem"}).status_code == 400
+    p = admin.put(f"/api/produtos/{p['id']}", json={"vai_cozinha": True}).get_json()["produto"]
+    assert p["destino"] == "cozinha" and p["vai_cozinha"] is True
+    p = admin.put(f"/api/produtos/{p['id']}", json={"destino": "nenhum"}).get_json()["produto"]
+    assert p["destino"] == "nenhum" and p["vai_cozinha"] is False
+
+
+def test_impressora_usb(ambiente, admin, monkeypatch):
+    from comandas import impressora
+    _, banco, _ = ambiente
+    enviados = []
+    monkeypatch.setattr(impressora, "enviar_windows", lambda nome, dados: enviados.append((nome, dados)))
+    monkeypatch.setattr(impressora, "listar_impressoras_windows", lambda: ["ELGIN i9", "POS-80"])
+    assert admin.get("/api/impressoras/usb").get_json()["impressoras"] == ["ELGIN i9", "POS-80"]
+    r = admin.put("/api/config", json={"impressora_bar_tipo": "bluetooth"})
+    assert r.status_code == 400
+    admin.put("/api/config", json={"impressora_bar_ativa": True, "impressora_bar_tipo": "usb", "impressora_bar_usb": "POS-80"})
+    assert admin.post("/api/impressora/teste", json={"qual": "bar"}).status_code == 200
+    assert enviados[-1][0] == "POS-80" and b"TESTE OK" in enviados[-1][1]
+    suco = admin.post("/api/produtos", json={"nome": "Suco", "preco_centavos": 900, "destino": "bar"}).get_json()["produto"]
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": suco["id"]}]}).get_json()["pedido"]
+    assert pedido["impressao"] == "ok" and enviados[-1][0] == "POS-80" and b"Suco" in enviados[-1][1]
+
+
+def test_impressora_usb_sem_nome_da_erro_claro(ambiente, admin):
+    _, banco, _ = ambiente
+    banco.salvar_config({"impressora_caixa_tipo": "usb", "impressora_caixa_usb": ""})
+    r = admin.post("/api/impressora/teste", json={"qual": "caixa"})
+    assert r.status_code == 400 and "USB" in r.get_json()["erro"]
+
+
+def test_caixa_pode_abrir_comanda(ambiente, admin):
+    app, banco, _ = ambiente
+    banco.salvar_config({"modo_comandas_ativo": True})
+    criar_usuario(admin, "bia", ["pedidos", "receber", "caixa", "comandas"])
+    criar_usuario(admin, "edu", ["pedidos"])
+    caixa = entrar(app, "bia")
+    assert caixa.get("/api/estado").get_json()["pode_abrir_comanda"] is True
+    assert entrar(app, "edu").get("/api/estado").get_json()["pode_abrir_comanda"] is False
+    assert b'id="abrir-comanda"' in caixa.get("/caixa").data
+    assert b'id="abrir-comanda"' not in entrar(app, "edu").get("/caixa").data
+
+
 def test_categoria_cozinha_pela_api(admin):
     admin.post("/api/produtos", json={"nome": "Coca", "preco_centavos": 600, "categoria": "Bebidas"})
     r = admin.post("/api/produtos/categoria-cozinha", json={"categoria": "Bebidas", "vai_cozinha": False})

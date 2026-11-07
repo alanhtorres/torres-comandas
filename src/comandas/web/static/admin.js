@@ -27,7 +27,7 @@
       $("form-produto").reset();
       $("produto-id").value = "";
       $("produto-ativo").checked = true;
-      $("produto-cozinha").checked = true;
+      $("produto-destino").value = "cozinha";
       $("titulo-form-produto").textContent = "Novo produto";
       $("cancelar-edicao").hidden = true;
     }
@@ -39,7 +39,7 @@
       $("produto-preco").value = (p.preco_centavos / 100).toFixed(2).replace(".", ",");
       $("produto-descricao").value = p.descricao;
       $("produto-ativo").checked = p.ativo;
-      $("produto-cozinha").checked = p.vai_cozinha;
+      $("produto-destino").value = p.destino;
       $("produto-foto").value = "";
       $("titulo-form-produto").textContent = "Editando: " + p.nome;
       $("cancelar-edicao").hidden = false;
@@ -66,7 +66,7 @@
         preco_centavos: centavos,
         descricao: $("produto-descricao").value,
         ativo: $("produto-ativo").checked,
-        vai_cozinha: $("produto-cozinha").checked,
+        destino: $("produto-destino").value,
       };
       try {
         const id = $("produto-id").value;
@@ -81,6 +81,36 @@
       }
     });
     $("cancelar-edicao").addEventListener("click", limparFormProduto);
+    // Produto novo numa categoria que já existe: já vem com a impressora dela.
+    $("produto-categoria").addEventListener("change", () => {
+      if ($("produto-id").value) return;
+      const destinos = new Set(produtos.filter((p) => p.categoria === $("produto-categoria").value.trim()).map((p) => p.destino));
+      if (destinos.size === 1) $("produto-destino").value = [...destinos][0];
+    });
+
+    const DESTINOS = { cozinha: "Cozinha", bar: "Bar", nenhum: "Nenhuma (já pronto)" };
+    const ETIQUETAS = {
+      cozinha: () => el("span", { class: "etiqueta preparando" }, "👨‍🍳 cozinha"),
+      bar: () => el("span", { class: "etiqueta pronto" }, "🍹 bar"),
+      nenhum: () => el("span", { class: "etiqueta" }, "só caixa"),
+    };
+
+    function escolhaCategoria(cat, daCategoria) {
+      const destinos = new Set(daCategoria.map((x) => x.destino));
+      const sel = el("select", { class: "destino-categoria", title: "Em qual impressora saem todos os produtos desta categoria" },
+        destinos.size > 1 ? el("option", { value: "" }, "Misturado (cada produto o seu)") : null,
+        ...Object.entries(DESTINOS).map(([valor, rotulo]) => el("option", { value: valor }, rotulo)));
+      sel.value = destinos.size > 1 ? "" : [...destinos][0];
+      sel.addEventListener("change", async () => {
+        if (!sel.value) return;
+        try {
+          await api("POST", "/api/produtos/categoria-destino", { categoria: cat, destino: sel.value });
+          aviso(`Todos os produtos de "${cat}" saem em: ${DESTINOS[sel.value]}`, "ok");
+        } catch (e) { aviso(e.message, "erro"); }
+        carregarProdutos();
+      });
+      return el("label", { class: "inline" }, "Sai na impressora: ", sel);
+    }
 
     async function carregarProdutos() {
       produtos = (await api("GET", "/api/produtos")).produtos;
@@ -93,18 +123,8 @@
       const linhas = [];
       for (const cat of categorias) {
         const daCategoria = produtos.filter((x) => x.categoria === cat);
-        const todosCozinha = daCategoria.every((x) => x.vai_cozinha);
         linhas.push(el("tr", { class: "grupo-categoria" }, el("td", { colspan: 4 }, cat),
-          el("td", { class: "acoes" }, el("button", {
-            title: "Aplica a todos os produtos desta categoria",
-            onclick: async () => {
-              try {
-                await api("POST", "/api/produtos/categoria-cozinha", { categoria: cat, vai_cozinha: !todosCozinha });
-                aviso(todosCozinha ? `Nenhum produto de "${cat}" vai mais para a cozinha` : `Todos os produtos de "${cat}" vão para a cozinha`, "ok");
-                carregarProdutos();
-              } catch (e) { aviso(e.message, "erro"); }
-            },
-          }, todosCozinha ? "Tirar a categoria da cozinha" : "Pôr a categoria na cozinha"))));
+          el("td", { class: "acoes" }, escolhaCategoria(cat, daCategoria))));
         for (const p of produtos.filter((x) => x.categoria === cat)) {
           const inputFoto = el("input", { type: "file", accept: "image/*", hidden: true, onchange: async (e) => {
             try { await enviarFoto(p.id, e.target.files[0]); aviso("Foto atualizada", "ok"); carregarProdutos(); }
@@ -115,16 +135,13 @@
             el("td", {}, el("strong", {}, p.nome), p.descricao ? el("div", { class: "dica" }, p.descricao) : null),
             el("td", {}, moeda(p.preco_centavos)),
             el("td", {}, p.ativo ? null : el("span", { class: "etiqueta" }, "indisponível"), " ",
-              p.vai_cozinha ? el("span", { class: "etiqueta preparando" }, "👨‍🍳 cozinha") : el("span", { class: "etiqueta" }, "só caixa")),
+              ETIQUETAS[p.destino]()),
             el("td", { class: "acoes" },
               inputFoto,
               el("button", { title: "Trocar foto", onclick: () => inputFoto.click() }, "📷"),
               el("button", { title: p.ativo ? "Marcar como indisponível" : "Marcar como disponível", onclick: async () => {
                 await api("PUT", "/api/produtos/" + p.id, { ativo: !p.ativo }); carregarProdutos();
               } }, p.ativo ? "Pausar" : "Ativar"),
-              el("button", { title: p.vai_cozinha ? "Marcar como pronto (não vai para a cozinha)" : "Marcar como item de preparo (vai para a cozinha)",
-                onclick: async () => { await api("PUT", "/api/produtos/" + p.id, { vai_cozinha: !p.vai_cozinha }); carregarProdutos(); } },
-                p.vai_cozinha ? "Tirar da cozinha" : "Pôr na cozinha"),
               el("button", { onclick: () => editarProduto(p) }, "Editar"),
               el("button", { class: "perigo", onclick: async () => {
                 if (!confirm("Excluir " + p.nome + "?")) return;
@@ -244,14 +261,40 @@
   // --- Configurações ----------------------------------------------------------
 
   if ($("aba-config")) {
+    // Impressora USB: a lista vem das impressoras instaladas no Windows do PC
+    // que roda o sistema. Uma escolhida antes que sumiu continua na lista.
+    async function carregarImpressorasUsb(config) {
+      let nomes = [], windows = true;
+      try { ({ impressoras: nomes, windows } = await api("GET", "/api/impressoras/usb")); } catch (e) { /* segue sem lista */ }
+      for (const sel of document.querySelectorAll("[data-lista-usb]")) {
+        const escolhida = config[sel.name] || "";
+        const opcoes = [el("option", { value: "" }, !windows ? "Só funciona com o sistema rodando no Windows"
+          : nomes.length ? "— escolha a impressora —" : "Nenhuma impressora instalada neste PC")];
+        for (const nome of nomes) opcoes.push(el("option", { value: nome }, nome));
+        if (escolhida && !nomes.includes(escolhida)) opcoes.push(el("option", { value: escolhida }, escolhida + " (não encontrada)"));
+        sel.replaceChildren(...opcoes);
+      }
+    }
+
+    function mostrarTipoImpressora() {
+      for (const sel of document.querySelectorAll("[data-tipo-impressora]")) {
+        const qual = sel.dataset.tipoImpressora;
+        document.querySelectorAll(`[data-so-rede="${qual}"]`).forEach((d) => (d.hidden = sel.value === "usb"));
+        document.querySelectorAll(`[data-so-usb="${qual}"]`).forEach((d) => (d.hidden = sel.value !== "usb"));
+      }
+    }
+    document.querySelectorAll("[data-tipo-impressora]").forEach((s) => s.addEventListener("change", mostrarTipoImpressora));
+
     async function carregarConfig() {
       const { config, url_base_detectada } = await api("GET", "/api/config");
+      await carregarImpressorasUsb(config);
       const form = $("form-config");
       for (const campo of form.querySelectorAll("[name]")) {
         const valor = config[campo.name];
         if (campo.type === "checkbox") campo.checked = !!valor;
         else campo.value = valor === undefined || valor === null ? "" : valor;
       }
+      mostrarTipoImpressora();
       $("cfg-url_base").placeholder = url_base_detectada ? "Detectado: " + url_base_detectada : "http://192.168.0.10:8090";
       }
     carregadores.config = () => carregarConfig().catch((e) => aviso(e.message, "erro"));
@@ -278,7 +321,7 @@
     document.querySelectorAll("[data-teste]").forEach((b) => b.addEventListener("click", async () => {
       b.disabled = true;
       try {
-        // salva antes, pra testar exatamente o IP/porta que estão na tela
+        // salva antes, pra testar exatamente a impressora que está na tela
         await salvarConfig();
         await api("POST", "/api/impressora/teste", { qual: b.dataset.teste });
         aviso("Teste enviado para a impressora", "ok");

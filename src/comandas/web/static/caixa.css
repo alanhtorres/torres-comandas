@@ -50,6 +50,15 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 .item-carrinho .qtd span { min-width: 22px; text-align: center; font-weight: 700; }
 .item-carrinho .obs-item { font-size: 0.8rem; color: var(--amarelo); }
 .campos-duplos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.linha-comanda { display: flex; gap: 8px; align-items: center; }
+.linha-comanda select { flex: 1; min-width: 0; }
+.linha-comanda button { white-space: nowrap; }
+/* Janela "Abrir comanda" do caixa (mesma busca da tela de comandas) */
+.busca-cliente-resultados { max-height: 260px; overflow-y: auto; margin-top: 8px; }
+.busca-cliente-resultados .resultado { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--borda); }
+.busca-cliente-resultados .resultado .info { flex: 1; min-width: 0; }
+.busca-cliente-resultados .resultado .info small { display: block; color: var(--texto-2); }
+.busca-cliente-resultados .resultado.escolhido { background: var(--painel-2); }
 .total-linha { display: flex; justify-content: space-between; align-items: center; font-size: 1.3rem; margin: 14px 0 10px; }
 .acoes-carrinho { display: flex; gap: 10px; justify-content: flex-end; }
 .acoes-carrinho .primario { flex: 1; }

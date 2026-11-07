@@ -1,4 +1,5 @@
 import socket
+import sys
 
 import pytest
 
@@ -37,6 +38,44 @@ def test_quebra_de_linha_respeita_largura():
     c.quebrar("palavra " * 20, 32)
     for linha in c.dados.split(b"\n")[1:-1]:
         assert len(linha) <= 32
+
+
+def test_cupom_do_bar_so_com_os_itens_do_bar():
+    pedido = {**PEDIDO, "itens": [
+        {"nome": "X-Burger", "quantidade": 1, "preco_centavos": 2500, "observacao": "", "setor": "cozinha"},
+        {"nome": "Chopp", "quantidade": 2, "preco_centavos": 1200, "observacao": "", "setor": "bar"},
+        {"nome": "Coca lata", "quantidade": 1, "preco_centavos": 600, "observacao": "", "setor": "nenhum"},
+    ]}
+    bar = impressora.cupom_cozinha(pedido, "Loja", setor="bar")
+    assert b"PEDIDO BAR" in bar and b"Chopp" in bar and b"X-Burger" not in bar and b"Coca" not in bar
+    cozinha = impressora.cupom_cozinha(pedido, "Loja")
+    assert b"PEDIDO COZINHA" in cozinha and b"X-Burger" in cozinha and b"Chopp" not in cozinha
+
+
+def test_enviar_para_escolhe_rede_ou_usb(impressora_falsa, monkeypatch):
+    usb = []
+    monkeypatch.setattr(impressora, "enviar_windows", lambda nome, dados: usb.append(nome))
+    cfg = {"impressora_bar_tipo": "rede", "impressora_bar_host": "127.0.0.1", "impressora_bar_porta": impressora_falsa.porta,
+           "impressora_bar_usb": "POS-58"}
+    impressora.enviar_para(cfg, "bar", b"rede")
+    assert impressora_falsa.esperar() == [b"rede"] and usb == []
+    impressora.enviar_para({**cfg, "impressora_bar_tipo": "usb"}, "bar", b"usb")
+    assert usb == ["POS-58"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="impressora USB só existe no Windows")
+def test_usb_de_verdade_no_windows():
+    nomes = impressora.listar_impressoras_windows()
+    assert isinstance(nomes, list) and all(isinstance(n, str) and n for n in nomes)
+    with pytest.raises(impressora.ErroImpressora, match="não encontrada"):
+        impressora.enviar_windows("Impressora Que Nao Existe 123", b"x")
+
+
+def test_usb_sem_nome_ou_fora_do_windows():
+    with pytest.raises(impressora.ErroImpressora, match="não escolhida"):
+        impressora.enviar_windows("", b"x")
+    if sys.platform != "win32":
+        assert impressora.listar_impressoras_windows() == []
 
 
 def test_envio_real_por_tcp(impressora_falsa):

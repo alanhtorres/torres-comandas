@@ -69,6 +69,9 @@ Na próxima visita basta buscar pelo nome, telefone ou CPF.
 
 - O caixa e o garçom lançam os pedidos **na comanda** do cliente; a conta aparece em
   "A receber" como "Comanda 12 · Fulano".
+- No caixa, o botão **"+ Abrir comanda"** (ao lado da escolha da comanda) busca ou
+  cadastra o cliente e abre a comanda sem sair da venda — ela já fica escolhida no
+  pedido. Aparece para quem tem a permissão "Comandas".
 - Quando a comanda é paga ela **fecha sozinha** e o número fica livre para outro cliente
   (se o pagamento for estornado, ela reabre). Quem sai sem consumir tem a comanda
   fechada na tela de Comandas.
@@ -110,15 +113,22 @@ só aparece para quem tem a permissão "Clientes e WhatsApp". A pedido do client
 botão "Apagar dados (LGPD)" apaga nome, telefone, CPF e nascimento — as vendas
 continuam nos relatórios, sem os dados pessoais.
 
-## O que vai para a cozinha
+## Cozinha, bar ou já pronto (qual impressora)
 
-Cada produto tem a opção **"Vai para a cozinha (precisa de preparo)"**. Bebidas em
-lata, chips, sobremesas embaladas etc. podem ficar desmarcados: eles aparecem no
-caixa e no garçom, mas não na tela nem na impressora da cozinha. Dá para marcar
-uma categoria inteira de uma vez (ex.: "Tirar a categoria da cozinha" em Bebidas)
-e depois ajustar produto por produto (ex.: o suco natural volta para a cozinha).
-Pedido só com itens prontos já nasce "pronto"; pedido misto mostra na cozinha
-só o que precisa ser preparado.
+Cada produto tem a opção **"Sai na impressora"**:
+- **Cozinha**: precisa de preparo — aparece na tela da cozinha e sai na impressora dela.
+- **Bar**: bebidas, drinks — sai na impressora do bar (ambiente separado).
+- **Nenhuma**: já pronto (bebida em lata, chips, sobremesa embalada) — aparece só
+  no caixa e no garçom.
+
+Em Administração → Cardápio, a linha de cada categoria tem **"Sai na impressora"**
+para escolher de uma vez onde sai a categoria inteira (ex.: Bebidas → Bar, Lanches →
+Cozinha). Depois dá para ajustar produto por produto (ex.: o suco natural na cozinha).
+Produto novo numa categoria que já existe vem com a impressora dela.
+
+Pedido misto é dividido: o cupom da cozinha só tem os lanches, o do bar só as
+bebidas. Pedido sem nada para a cozinha (só bar ou só itens prontos) já nasce
+"pronto"; a tela da cozinha mostra só o que ela precisa preparar.
 
 ## Histórico (auditoria)
 
@@ -161,13 +171,20 @@ para quem tem essas permissões.
 
 ## Impressoras
 
-Impressoras térmicas com rede (Ethernet/Wi-Fi) no padrão ESC/POS — Epson, Elgin,
-Bematech, Tanca, Daruma e as genéricas — pela porta TCP 9100, sem driver:
-- **Cozinha**: cada pedido sai impresso (itens em letra grande, observações).
+Impressoras térmicas no padrão ESC/POS — Epson, Elgin, Bematech, Tanca, Daruma e
+as genéricas. Cada uma pode ser ligada de dois jeitos (Administração → Configurações):
+- **Rede** (Ethernet/Wi-Fi): pelo IP, porta TCP 9100, sem driver.
+- **USB**: instalada no Windows **do PC que roda o Torres Comandas** (driver do
+  fabricante ou "Generic / Text Only"); escolha pelo nome na lista. Os comandos vão
+  "crus" (RAW) pelo spooler do Windows, com corte de papel e letra grande.
+
+São três impressoras:
+- **Cozinha**: os itens de preparo de cada pedido (letra grande, observações).
+- **Bar**: os itens marcados para sair no bar.
 - **Caixa**: conferência de conta da mesa e comprovante de fechamento de caixa.
 
-Pode ser a mesma impressora para as duas. Se a impressora estiver desligada, o
-pedido **não se perde**: continua na tela da cozinha e pode ser reimpresso.
+Pode ser a mesma impressora para mais de uma. Se a impressora estiver desligada, o
+pedido **não se perde**: continua na tela e pode ser reimpresso (🖨️ no caixa).
 
 ## Funcionamento sem internet
 

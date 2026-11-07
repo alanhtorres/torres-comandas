@@ -71,9 +71,14 @@
           <div class="largo"><label for="produto-descricao">Descrição (aparece no cardápio do QR code)</label><input id="produto-descricao" maxlength="200"></div>
           <div><label for="produto-foto">Foto (opcional)</label><input id="produto-foto" type="file" accept="image/*"></div>
           <div><label>&nbsp;</label><label class="inline"><input id="produto-ativo" type="checkbox" checked> Disponível para venda</label></div>
-          <div class="largo"><label class="inline"><input id="produto-cozinha" type="checkbox" checked> Vai para a cozinha (precisa de preparo)</label>
-            <p class="dica">Desmarque para itens que já estão prontos — bebida em lata, chips, sobremesa embalada. Eles aparecem só
-              no caixa e no garçom, não na tela nem na impressora da cozinha.</p></div>
+          <div class="largo"><label for="produto-destino">Sai na impressora</label>
+            <select id="produto-destino">
+              <option value="cozinha">Cozinha (precisa de preparo — aparece na tela da cozinha)</option>
+              <option value="bar">Bar (bebidas, drinks — sai na impressora do bar)</option>
+              <option value="nenhum">Nenhuma (já pronto — bebida em lata, chips, sobremesa embalada)</option>
+            </select>
+            <p class="dica">"Nenhuma": o item aparece só no caixa e no garçom. Para mudar a categoria inteira de uma vez, use a escolha
+              na linha da categoria, na lista abaixo.</p></div>
         </div>
         <div class="acoes-form">
           <button type="button" id="cancelar-edicao" class="discreto" hidden>Cancelar edição</button>
@@ -249,22 +254,30 @@
           </div>
         </div>
 
+        {% macro bloco_impressora(qual, rotulo, ip_exemplo, estilo="") %}
+          <label class="inline"{% if estilo %} style="{{ estilo }}"{% endif %}><input type="checkbox" name="impressora_{{ qual }}_ativa"> {{ rotulo }}</label>
+          <div class="grade-form">
+            <div><label for="cfg-impressora_{{ qual }}_tipo">Ligada por</label>
+              <select id="cfg-impressora_{{ qual }}_tipo" name="impressora_{{ qual }}_tipo" data-tipo-impressora="{{ qual }}">
+                <option value="rede">Rede (cabo ou Wi-Fi)</option><option value="usb">USB (instalada neste PC)</option>
+              </select></div>
+            <div data-so-rede="{{ qual }}"><label for="cfg-impressora_{{ qual }}_host">IP da impressora</label><input id="cfg-impressora_{{ qual }}_host" name="impressora_{{ qual }}_host" placeholder="{{ ip_exemplo }}"></div>
+            <div data-so-rede="{{ qual }}"><label for="cfg-impressora_{{ qual }}_porta">Porta</label><input id="cfg-impressora_{{ qual }}_porta" name="impressora_{{ qual }}_porta" type="number"></div>
+            <div data-so-usb="{{ qual }}" hidden><label for="cfg-impressora_{{ qual }}_usb">Impressora do Windows</label>
+              <select id="cfg-impressora_{{ qual }}_usb" name="impressora_{{ qual }}_usb" data-lista-usb></select></div>
+            <div><label>&nbsp;</label><button type="button" data-teste="{{ qual }}">Imprimir teste</button></div>
+          </div>
+        {% endmacro %}
         <div class="cartao">
-          <h2>Impressoras térmicas de rede</h2>
-          <p class="dica">Impressoras com rede (Ethernet/Wi-Fi) no padrão ESC/POS — Epson, Elgin, Bematech, Tanca e similares — pela porta 9100.
-            Descubra o IP imprimindo a folha de autoteste da impressora. Pode ser a mesma impressora para as duas funções.</p>
-          <label class="inline"><input type="checkbox" name="impressora_cozinha_ativa"> Imprimir os pedidos na cozinha</label>
-          <div class="grade-form">
-            <div><label for="cfg-impressora_cozinha_host">IP da impressora da cozinha</label><input id="cfg-impressora_cozinha_host" name="impressora_cozinha_host" placeholder="192.168.0.50"></div>
-            <div><label for="cfg-impressora_cozinha_porta">Porta</label><input id="cfg-impressora_cozinha_porta" name="impressora_cozinha_porta" type="number"></div>
-            <div><label>&nbsp;</label><button type="button" data-teste="cozinha">Imprimir teste</button></div>
-          </div>
-          <label class="inline" style="margin-top: 16px"><input type="checkbox" name="impressora_caixa_ativa"> Impressora do caixa (conferência de conta e fechamento de caixa)</label>
-          <div class="grade-form">
-            <div><label for="cfg-impressora_caixa_host">IP da impressora do caixa</label><input id="cfg-impressora_caixa_host" name="impressora_caixa_host" placeholder="192.168.0.51"></div>
-            <div><label for="cfg-impressora_caixa_porta">Porta</label><input id="cfg-impressora_caixa_porta" name="impressora_caixa_porta" type="number"></div>
-            <div><label>&nbsp;</label><button type="button" data-teste="caixa">Imprimir teste</button></div>
-          </div>
+          <h2>Impressoras térmicas</h2>
+          <p class="dica">Impressoras no padrão ESC/POS — Epson, Elgin, Bematech, Tanca e similares. <strong>Rede:</strong> informe o IP
+            (descubra imprimindo a folha de autoteste da impressora), porta 9100. <strong>USB:</strong> instale a impressora no Windows
+            <em>deste PC</em> (o que roda o Torres Comandas) com o driver do fabricante ou "Generic / Text Only" e escolha pelo nome.
+            Pode ser a mesma impressora para mais de uma função.</p>
+          {{ bloco_impressora("cozinha", "Imprimir os pedidos na cozinha", "192.168.0.50") }}
+          {{ bloco_impressora("bar", "Imprimir os pedidos no bar (produtos marcados para sair no bar)", "192.168.0.52", "margin-top: 16px") }}
+          {{ bloco_impressora("caixa", "Impressora do caixa (conferência de conta e fechamento de caixa)", "192.168.0.51", "margin-top: 16px") }}
+          <p class="dica">Qual categoria sai em qual impressora: escolha em <a href="#produtos">Cardápio</a>, na linha de cada categoria.</p>
           <div class="grade-form">
             <div><label for="cfg-impressora_colunas">Largura do papel</label>
               <select id="cfg-impressora_colunas" name="impressora_colunas"><option value="48">80 mm (48 colunas)</option><option value="32">58 mm (32 colunas)</option></select></div>

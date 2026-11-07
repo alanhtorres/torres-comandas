@@ -105,6 +105,84 @@
     if ([...sel.options].some((o) => o.value === atual)) sel.value = atual;
   }
 
+  // --- Abrir comanda sem sair do caixa -------------------------------------
+  // Mesmo fluxo da tela de Comandas: busca o cliente (ou cadastra um novo),
+  // abre a comanda e já deixa ela escolhida no pedido.
+
+  function dialogoAbrirComanda() {
+    const busca = el("input", { type: "search", placeholder: "Buscar cliente por nome, telefone ou CPF", autocomplete: "off" });
+    const resultados = el("div", { class: "busca-cliente-resultados" });
+    const numero = el("input", { maxlength: 20, placeholder: "Deixe vazio para usar o próximo livre", inputmode: "numeric" });
+    const areaNovo = el("div", { hidden: true });
+    let escolhido = null, form = null, criado = null; // criado: cadastro feito, não cadastra de novo se a abertura falhar
+    const botaoNovo = el("button", { type: "button", class: "primario", onclick: () => {
+      form = window.C.formCliente({ nome: /\d/.test(busca.value) ? "" : busca.value });
+      areaNovo.replaceChildren(el("h3", {}, "Cliente novo"), form.elemento);
+      areaNovo.hidden = false;
+      escolhido = null;
+      resultados.replaceChildren();
+    } }, "+ Cliente novo");
+
+    let temporizador = null;
+    busca.addEventListener("input", () => {
+      clearTimeout(temporizador);
+      temporizador = setTimeout(buscar, 250);
+    });
+    async function buscar() {
+      const q = busca.value.trim();
+      if (q.length < 2) { resultados.replaceChildren(); return; }
+      const { clientes } = await api("GET", "/api/clientes/busca?q=" + encodeURIComponent(q));
+      const abertaPor = new Map(estado.comandas.map((k) => [k.cliente_id, k]));
+      resultados.replaceChildren(...(clientes.length ? clientes.map((c) => {
+        const aberta = abertaPor.get(c.id);
+        const linha = el("div", { class: "resultado" + (escolhido && escolhido.id === c.id ? " escolhido" : "") },
+          el("div", { class: "info" }, el("strong", {}, c.nome), c.aniversario_hoje ? " 🎂" : "",
+            el("small", {}, c.telefone_formatado + (c.cpf_formatado ? " · CPF " + c.cpf_formatado : ""))),
+          aberta ? el("button", { type: "button", onclick: () => { usarComanda(aberta.id); janela.fechar(); } }, "Usar comanda " + aberta.numero + " (já aberta)")
+            : el("button", { type: "button", class: "verde", onclick: () => {
+              escolhido = c;
+              form = null;
+              areaNovo.hidden = true;
+              areaNovo.replaceChildren(); // sem os campos obrigatórios do cadastro escondidos
+              resultados.querySelectorAll(".resultado").forEach((r) => r.classList.remove("escolhido"));
+              linha.classList.add("escolhido");
+              numero.focus();
+            } }, "Escolher"));
+        return linha;
+      }) : [el("div", { class: "vazio" }, "Nenhum cliente encontrado. Use \"+ Cliente novo\".")]));
+    }
+
+    const janela = dialogo({
+      titulo: "Abrir comanda",
+      largo: true,
+      corpo: el("div", {},
+        el("div", { class: "linha-comanda" }, busca, botaoNovo), resultados, areaNovo,
+        el("label", {}, "Número da comanda / cartão"), numero),
+      confirmar: "Abrir comanda",
+      aoConfirmar: async () => {
+        let cliente = escolhido;
+        if (form) {
+          if (!criado) criado = (await api("POST", "/api/clientes", form.valores())).cliente;
+          cliente = criado;
+        }
+        if (!cliente) throw new Error("Busque e escolha o cliente, ou cadastre um cliente novo.");
+        const r = await api("POST", "/api/comandas", { cliente_id: cliente.id, numero: numero.value });
+        const k = r.comanda;
+        aviso(`Comanda ${k.numero} aberta para ${k.cliente_nome}` + (k.aniversario_hoje ? " — 🎂 aniversariante do dia!" : ""), "ok");
+        estado.comandas = [...estado.comandas, k];
+        renderComandas();
+        usarComanda(k.id);
+        monitor.forcar();
+      },
+    });
+  }
+
+  function usarComanda(id) {
+    $("comanda").value = String(id);
+  }
+
+  if ($("abrir-comanda")) $("abrir-comanda").addEventListener("click", dialogoAbrirComanda);
+
   function limparCarrinho() {
     carrinho = [];
     $("comanda").value = "";
@@ -120,7 +198,7 @@
         cliente: $("cliente").value, mesa: $("mesa").value, observacao: $("obs").value,
         comanda_id: $("comanda").value || null,
       });
-      aviso("Pedido nº " + r.pedido.codigo + (r.pedido.vai_cozinha ? " enviado para a cozinha" : " registrado (sem preparo, já está pronto)"), "ok");
+      aviso("Pedido nº " + r.pedido.codigo + (r.pedido.setores.length ? " enviado para: " + r.pedido.setores.join(" e ") : " registrado (sem preparo, já está pronto)"), "ok");
       limparCarrinho();
       monitor.forcar();
       if (receberDepois) dialogoPagamento([r.pedido], r.pedido.comanda_numero ? "Comanda " + r.pedido.comanda_numero : "Pedido nº " + r.pedido.codigo);
@@ -168,8 +246,9 @@
         botoes.push(el("button", { onclick: () => acao("POST", `/api/pedidos/${p.id}/status`, { status: "pronto" }) }, "Marcar pronto"));
         botoes.push(chamar("📢 Chamar"));
       }
-      if (estado.impressora_cozinha_ativa) {
-        botoes.push(el("button", { class: "discreto", title: "Reimprimir na cozinha", onclick: () => acao("POST", `/api/pedidos/${p.id}/imprimir`, {}, "Enviado para a impressora") }, "🖨️"));
+      const ondeImprime = (p.setores || []).filter((s) => estado["impressora_" + s + "_ativa"]);
+      if (ondeImprime.length) {
+        botoes.push(el("button", { class: "discreto", title: "Reimprimir no(a) " + ondeImprime.join(" e "), onclick: () => acao("POST", `/api/pedidos/${p.id}/imprimir`, {}, "Enviado para a impressora") }, "🖨️"));
       }
     }
     if (pode.receber && !p.pago) {

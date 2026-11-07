@@ -174,7 +174,7 @@
           itens: [...carrinho].map(([id, i]) => ({ produto_id: id, quantidade: i.quantidade, observacao: i.observacao })),
           cliente: cliente.value, observacao: obs.value,
         });
-        aviso(`Pedido nº ${r.pedido.codigo} (${destino()}) enviado` + (r.pedido.vai_cozinha ? " para a cozinha" : " (já está pronto)"), "ok");
+        aviso(`Pedido nº ${r.pedido.codigo} (${destino()}) enviado` + (r.pedido.setores.length ? " para: " + r.pedido.setores.join(" e ") : " (já está pronto)"), "ok");
         carrinho.clear();
         mesa = "";
         comandaId = null;

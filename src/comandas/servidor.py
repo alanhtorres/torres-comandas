@@ -3,6 +3,7 @@ administração) e a API que todas elas usam. Cada página e cada ação confere
 se o usuário logado tem a permissão correspondente."""
 import io
 import logging
+import sys
 import threading
 import time
 import uuid
@@ -269,7 +270,9 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             "formas": FORMAS_PAGAMENTO,
             "taxa_servico_percentual": cfg["taxa_servico_percentual"],
             "impressora_cozinha_ativa": cfg["impressora_cozinha_ativa"],
+            "impressora_bar_ativa": cfg["impressora_bar_ativa"],
             "impressora_caixa_ativa": cfg["impressora_caixa_ativa"],
+            "pode_abrir_comanda": pode("comandas"),
         }
         if sessao and pode("caixa", "receber"):
             resumo = banco.resumo_sessao(sessao["id"])
@@ -283,15 +286,22 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
 
     # --- Impressão (em segundo plano: impressora lenta não trava a tela) ------
 
+    NOMES_IMPRESSORA = {"cozinha": "da cozinha", "bar": "do bar", "caixa": "do caixa"}
+
+    def _em_segundo_plano(trabalho) -> None:
+        if impressao_sincrona:
+            trabalho()
+        else:
+            threading.Thread(target=trabalho, daemon=True).start()
+
     def _imprimir(qual: str, gerar, ao_terminar=None) -> None:
         cfg = banco.config()
         if not cfg[f"impressora_{qual}_ativa"]:
-            raise ErroNegocio(f"A impressora {'da cozinha' if qual == 'cozinha' else 'do caixa'} está desligada nas configurações.")
+            raise ErroNegocio(f"A impressora {NOMES_IMPRESSORA[qual]} está desligada nas configurações.")
 
         def trabalho():
             try:
-                impressora.enviar(cfg[f"impressora_{qual}_host"], cfg[f"impressora_{qual}_porta"],
-                                  gerar(cfg["nome_loja"], cfg["impressora_colunas"], cfg["impressora_codificacao"]))
+                impressora.enviar_para(cfg, qual, gerar(cfg["nome_loja"], cfg["impressora_colunas"], cfg["impressora_codificacao"]))
                 resultado = "ok"
             except impressora.ErroImpressora as exc:
                 log.warning("Falha na impressora %s: %s", qual, exc)
@@ -299,17 +309,38 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             if ao_terminar:
                 ao_terminar(resultado)
 
-        if impressao_sincrona:
-            trabalho()
-        else:
-            threading.Thread(target=trabalho, daemon=True).start()
+        _em_segundo_plano(trabalho)
 
-    def _imprimir_cozinha(pedido: dict) -> None:
-        if not pedido["vai_cozinha"]:
-            raise ErroNegocio("Esse pedido não tem nada para a cozinha preparar.")
+    def _imprimir_pedido(pedido: dict, automatico: bool = False) -> bool:
+        """Manda cada parte do pedido para a impressora do seu ambiente
+        (lanches na cozinha, bebidas no bar). Devolve se imprimiu algo."""
+        if not pedido["setores"]:
+            if automatico:
+                return False
+            raise ErroNegocio("Esse pedido não tem nada para a cozinha nem para o bar.")
+        cfg = banco.config()
+        setores = [s for s in pedido["setores"] if cfg[f"impressora_{s}_ativa"]]
+        if not setores:
+            if automatico:
+                return False
+            if len(pedido["setores"]) == 1:
+                raise ErroNegocio(f"A impressora {NOMES_IMPRESSORA[pedido['setores'][0]]} está desligada nas configurações.")
+            raise ErroNegocio("As impressoras da cozinha e do bar estão desligadas nas configurações.")
         banco.registrar_impressao(pedido["id"], "imprimindo")
-        _imprimir("cozinha", lambda loja, col, cod: impressora.cupom_cozinha(pedido, loja, col, cod),
-                  lambda r: banco.registrar_impressao(pedido["id"], r))
+
+        def trabalho():
+            erros = []
+            for setor in setores:
+                try:
+                    impressora.enviar_para(cfg, setor, impressora.cupom_cozinha(
+                        pedido, cfg["nome_loja"], cfg["impressora_colunas"], cfg["impressora_codificacao"], setor))
+                except impressora.ErroImpressora as exc:
+                    log.warning("Falha na impressora %s: %s", setor, exc)
+                    erros.append(f"{setor}: {exc}" if len(setores) > 1 else str(exc))
+            banco.registrar_impressao(pedido["id"], "erro: " + "; ".join(erros) if erros else "ok")
+
+        _em_segundo_plano(trabalho)
+        return True
 
     # --- Pedidos ---------------------------------------------------------------
 
@@ -326,8 +357,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         pedido = banco.criar_pedido(dados.get("itens"), origem=origem, mesa=dados.get("mesa", ""),
                                     cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator(),
                                     comanda_id=comanda_id)
-        if banco.config()["impressora_cozinha_ativa"] and pedido["vai_cozinha"]:
-            _imprimir_cozinha(pedido)
+        _imprimir_pedido(pedido, automatico=True)
         return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"])})
 
     @app.post("/api/pedidos/<int:pedido_id>/status")
@@ -351,8 +381,9 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         pedido = banco.obter_pedido(pedido_id)
         if not pedido:
             abort(404)
-        _imprimir_cozinha(pedido)
-        banco.registrar_acao(ator(), "Reimprimiu pedido na cozinha", f"Pedido nº {pedido['codigo']}", pedido_id)
+        _imprimir_pedido(pedido)
+        onde = " e ".join(NOMES_IMPRESSORA[s].split()[-1] for s in pedido["setores"])
+        banco.registrar_acao(ator(), "Reimprimiu pedido", f"Pedido nº {pedido['codigo']} ({onde})", pedido_id)
         return jsonify({"ok": True})
 
     @app.post("/api/garcom/<int:chamado_id>/atender")
@@ -468,8 +499,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""),
             por={"id": None, "nome": f"Cliente (mesa {mesa['numero']})"},
         )
-        if cfg["impressora_cozinha_ativa"] and pedido["vai_cozinha"]:
-            _imprimir_cozinha(pedido)
+        _imprimir_pedido(pedido, automatico=True)
         return jsonify({"ok": True, "pedido": _pedido_para_cliente(pedido)})
 
     @app.post("/api/cliente/<token>/chamar")
@@ -529,6 +559,17 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         if not categoria:
             raise ErroNegocio("Categoria inválida.")
         alterados = banco.definir_cozinha_categoria(categoria, bool(dados.get("vai_cozinha")), por=ator())
+        return jsonify({"ok": True, "alterados": alterados})
+
+    @app.post("/api/produtos/categoria-destino")
+    @exigir("cardapio")
+    def api_categoria_destino():
+        """Escolhe em qual impressora sai a categoria inteira (cozinha, bar ou nenhuma)."""
+        dados = request.get_json(silent=True) or {}
+        categoria = str(dados.get("categoria") or "")
+        if not categoria:
+            raise ErroNegocio("Categoria inválida.")
+        alterados = banco.definir_destino_categoria(categoria, str(dados.get("destino") or ""), por=ator())
         return jsonify({"ok": True, "alterados": alterados})
 
     @app.delete("/api/produtos/<int:produto_id>")
@@ -688,19 +729,30 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @exigir("configuracoes")
     def api_teste_impressora():
         qual = (request.get_json(silent=True) or {}).get("qual", "cozinha")
-        if qual not in ("cozinha", "caixa"):
+        if qual not in NOMES_IMPRESSORA:
             raise ErroNegocio("Impressora inválida.")
         cfg = banco.config()
         cupom = impressora.Cupom(cfg["impressora_colunas"], cfg["impressora_codificacao"])
         cupom.cmd(impressora.ALINHAR_CENTRO).linha(cfg["nome_loja"])
         cupom.cmd(impressora.TAMANHO_DUPLO).linha("TESTE OK").cmd(impressora.TAMANHO_NORMAL)
-        cupom.linha(f"Impressora do(a) {qual}").linha("Acentuação: ção ã é ê ó ú ç")
+        cupom.linha(f"Impressora {NOMES_IMPRESSORA[qual]}").linha("Acentuação: ção ã é ê ó ú ç")
         cupom.separador()
         try:
-            impressora.enviar(cfg[f"impressora_{qual}_host"], cfg[f"impressora_{qual}_porta"], cupom.bytes())
+            impressora.enviar_para(cfg, qual, cupom.bytes())
         except impressora.ErroImpressora as exc:
             raise ErroNegocio(str(exc))
         return jsonify({"ok": True})
+
+    @app.get("/api/impressoras/usb")
+    @exigir("configuracoes")
+    def api_impressoras_usb():
+        """Impressoras instaladas no Windows deste PC (para escolher a USB)."""
+        try:
+            nomes = impressora.listar_impressoras_windows()
+        except OSError as exc:
+            log.warning("Não foi possível listar as impressoras do Windows: %s", exc)
+            nomes = []
+        return jsonify({"impressoras": nomes, "windows": sys.platform == "win32"})
 
     # --- Administração: usuários e permissões --------------------------------
 
