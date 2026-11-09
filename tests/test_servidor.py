@@ -761,3 +761,42 @@ def test_muitas_senhas_erradas_bloqueiam_o_aparelho(ambiente, admin, monkeypatch
     outro = app.test_client()
     assert outro.post("/login", data={"usuario": "ana", "senha": "1234"},
                       environ_base={"REMOTE_ADDR": "192.168.0.50"}).status_code == 302
+
+
+# --- App Android do garçom ----------------------------------------------------
+
+def test_identificar_e_pagina_do_app_sem_apk(tmp_path):
+    # pasta vazia: no build do instalador o .apk de verdade já está na pasta padrão
+    banco = Banco(tmp_path / "t.db")
+    app = criar_app(banco, tmp_path, url_base_padrao="http://192.168.0.10:8090", pasta_app=tmp_path / "sem-app")
+    c = app.test_client()
+    r = c.get("/api/identificar").get_json()
+    assert r["sistema"] == "torres-comandas" and r["app"] is None and len(r["id"]) == 16
+    assert c.get("/api/identificar").get_json()["id"] == r["id"]  # o mesmo sempre
+    assert "id_instalacao" not in banco.config_publica()
+    assert "não está disponível".encode() in c.get("/app").data
+    assert c.get("/app/torres-garcom.apk").status_code == 404
+
+
+def test_app_android_para_baixar_e_conectar(tmp_path):
+    pasta_app = tmp_path / "app"
+    pasta_app.mkdir()
+    (pasta_app / "torres-garcom.apk").write_bytes(b"PK\x03\x04" + b"0" * 2048)
+    (pasta_app / "torres-garcom.json").write_text('{"versionName": "2.6.0", "versionCode": 20600}')
+    banco = Banco(tmp_path / "t.db")
+    app = criar_app(banco, tmp_path, url_base_padrao="http://192.168.0.10:8090", pasta_app=pasta_app)
+    c = app.test_client()
+    info = c.get("/api/identificar").get_json()["app"]
+    assert info["versao_codigo"] == 20600 and info["versao"] == "2.6.0"
+    pagina = c.get("/app").data.decode()
+    assert "http://192.168.0.10:8090/app/torres-garcom.apk" in pagina
+    assert "intent://conectar?servidor=http%3A%2F%2F192.168.0.10%3A8090#Intent;scheme=torrescomandas;package=br.com.torres.garcom" in pagina
+    apk = c.get("/app/torres-garcom.apk")
+    assert apk.status_code == 200 and apk.data.startswith(b"PK") and apk.mimetype == "application/vnd.android.package-archive"
+    # a página com o QR code é só para a equipe
+    assert c.get("/app/instalar").status_code == 302
+    banco.criar_primeiro_admin({"nome": "Ana", "login": "ana", "senha": "1234"})
+    admin = entrar(app, "ana")
+    r = admin.get("/app/instalar")
+    assert r.status_code == 200 and b"<svg" in r.data and b"http://192.168.0.10:8090/app" in r.data
+    assert b"/app/instalar" in admin.get("/").data

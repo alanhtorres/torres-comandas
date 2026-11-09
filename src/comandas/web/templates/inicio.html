@@ -35,6 +35,7 @@
       {% endif %}
       {% if pode('garcom') %}
       <a href="/garcom"><div class="cartao"><div class="icone">🛎️</div><h2>Garçom</h2><p>Para celular/tablet: fazer pedidos na mesa, receber os chamados do QR code e entregar o que ficou pronto.</p><code>{{ url_base }}/garcom</code></div></a>
+      <a href="/app/instalar"><div class="cartao"><div class="icone">📱</div><h2>App do garçom (Android)</h2><p>Instale no celular pelo QR code. Avisa os chamados mesmo com o celular no bolso e não se perde ao sair e voltar.</p><code>{{ url_base }}/app</code></div></a>
       {% endif %}
       {% if pode('cozinha') %}
       <a href="/cozinha"><div class="cartao"><div class="icone">👨‍🍳</div><h2>Cozinha</h2><p>Pedidos a preparar. Marque "Pronto" quando terminar.</p><code>{{ url_base }}/cozinha</code></div></a>

@@ -7,3 +7,12 @@ build/
 dist/
 installer/Output/
 icon/icon.ico
+src/comandas/app_android/*.apk
+src/comandas/app_android/*.json
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.jks
+*.keystore
+*.p12

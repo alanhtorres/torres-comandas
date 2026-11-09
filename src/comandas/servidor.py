@@ -2,6 +2,7 @@
 administração) e a API que todas elas usam. Cada página e cada ação confere
 se o usuário logado tem a permissão correspondente."""
 import io
+import json
 import logging
 import secrets
 import sys
@@ -11,6 +12,8 @@ import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
+from typing import Optional
+from urllib.parse import quote
 
 import segno
 from flask import (
@@ -44,7 +47,8 @@ def _salvar_foto(arquivo_enviado, destino: Path, lado_maximo: int) -> None:
     img.save(destino, "JPEG", quality=85, optimize=True)
 
 
-def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sincrona: bool = False) -> Flask:
+def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sincrona: bool = False,
+              pasta_app: Optional[Path] = None) -> Flask:
     """`url_base_padrao` pode ser um texto fixo ou uma função que devolve o
     endereço atual deste PC na rede (redescoberto se o IP mudar)."""
     web = Path(__file__).parent / "web"
@@ -296,6 +300,56 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @app.get("/painel")
     def tela_painel():
         return render_template("painel.html")
+
+    # --- App Android do garçom -----------------------------------------------
+    # O .apk vem dentro do instalador do Windows (gerado pelo GitHub Actions)
+    # e é baixado pelo celular direto deste PC, pelo Wi-Fi: não precisa de
+    # internet nem de Play Store.
+
+    pasta_apk = pasta_app or (Path(__file__).parent / "app_android")
+    NOME_APK = "torres-garcom.apk"
+    PACOTE_APP = "br.com.torres.garcom"
+
+    def info_app():
+        apk, meta = pasta_apk / NOME_APK, pasta_apk / "torres-garcom.json"
+        if not apk.is_file():
+            return None
+        try:
+            dados = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            dados = {}
+        return {"versao": dados.get("versionName", ""), "versao_codigo": int(dados.get("versionCode") or 0),
+                "tamanho_mb": round(apk.stat().st_size / 1_048_576, 1)}
+
+    @app.get("/api/identificar")
+    def api_identificar():
+        """Público: o app usa para achar o sistema na rede (e saber se há versão nova dele)."""
+        from . import __version__
+        return jsonify({"sistema": "torres-comandas", "id": banco.id_instalacao(), "loja": banco.config()["nome_loja"],
+                        "versao": __version__, "app": info_app()})
+
+    @app.get("/app")
+    def tela_app():
+        """Página que o celular abre ao ler o QR code: baixar e conectar o app."""
+        base = url_base()
+        apk = base + "/app/" + NOME_APK
+        conectar = (f"intent://conectar?servidor={quote(base, safe='')}#Intent;scheme=torrescomandas;"
+                    f"package={PACOTE_APP};S.browser_fallback_url={quote(apk, safe='')};end")
+        return render_template("app.html", app_info=info_app(), url_apk=apk, url_conectar=conectar, url_base=base)
+
+    @app.get("/app/" + NOME_APK)
+    def baixar_apk():
+        if not info_app():
+            abort(404)
+        return send_file(pasta_apk / NOME_APK, mimetype="application/vnd.android.package-archive",
+                         as_attachment=True, download_name=NOME_APK)
+
+    @app.get("/app/instalar")
+    @exigir("garcom", "usuarios", "configuracoes")
+    def tela_app_instalar():
+        endereco = url_base() + "/app"
+        qr = segno.make(endereco, error="m").svg_inline(scale=8, dark="#000", light="#fff")
+        return render_template("app_instalar.html", qr=qr, endereco=endereco, app_info=info_app())
 
     @app.get("/m/<token>")
     def tela_cliente(token):

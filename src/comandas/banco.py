@@ -77,7 +77,7 @@ CONFIG_PADRAO = {
 }
 
 # Chaves que nunca saem pela API de configuração.
-CONFIG_PRIVADA = {"secret_key", "versao_permissoes"}
+CONFIG_PRIVADA = {"secret_key", "versao_permissoes", "id_instalacao"}
 
 # O que cada usuário pode acessar — o administrador marca uma a uma.
 PERMISSOES = {
@@ -582,6 +582,15 @@ class Banco:
             chave = secrets.token_hex(32)
             self.salvar_config({"secret_key": chave})
         return chave
+
+    def id_instalacao(self) -> str:
+        """Identifica esta instalação: o app do garçom usa para reencontrar
+        o mesmo sistema na rede quando o IP do PC muda."""
+        ident = self.config().get("id_instalacao")
+        if not ident:
+            ident = secrets.token_hex(8)
+            self.salvar_config({"id_instalacao": ident})
+        return ident
 
     # --- Usuários e permissões -----------------------------------------
 

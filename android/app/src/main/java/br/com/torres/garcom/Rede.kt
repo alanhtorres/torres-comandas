@@ -1,0 +1,160 @@
+package br.com.torres.garcom
+
+import android.content.Context
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.Socket
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/** Um Torres Comandas encontrado na rede. */
+data class Sistema(val url: String, val id: String, val loja: String, val appVersaoCodigo: Int)
+
+/** O que o app guarda no aparelho: a qual sistema está ligado e o login (cookie). */
+object Preferencias {
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("torres", Context.MODE_PRIVATE)
+
+    fun servidor(ctx: Context): String? = prefs(ctx).getString("servidor", null)
+    fun idSistema(ctx: Context): String? = prefs(ctx).getString("id", null)
+    fun loja(ctx: Context): String = prefs(ctx).getString("loja", null) ?: "Torres Comandas"
+
+    fun salvar(ctx: Context, s: Sistema) {
+        prefs(ctx).edit().putString("servidor", s.url).putString("id", s.id).putString("loja", s.loja).apply()
+    }
+
+    // Cópia do cookie de login do WebView, para o serviço de alertas usar
+    // (o serviço roda sem a tela aberta).
+    fun cookie(ctx: Context): String? = prefs(ctx).getString("cookie", null)
+    fun salvarCookie(ctx: Context, cookie: String?) {
+        prefs(ctx).edit().putString("cookie", cookie).apply()
+    }
+
+    /** "Turno": enquanto ativo, o serviço fica recebendo os chamados. */
+    fun turnoAtivo(ctx: Context): Boolean = prefs(ctx).getBoolean("turno", true)
+    fun definirTurno(ctx: Context, ativo: Boolean) {
+        prefs(ctx).edit().putBoolean("turno", ativo).apply()
+    }
+}
+
+object Rede {
+    const val PORTA_PADRAO = 8090
+
+    /** Aceita "192.168.0.10", "192.168.0.10:8090" ou "http://192.168.0.10:8090/garcom". */
+    fun normalizar(texto: String): String? {
+        var t = texto.trim()
+        if (t.isEmpty()) return null
+        if (!t.startsWith("http://") && !t.startsWith("https://")) t = "http://$t"
+        return try {
+            val u = URL(t)
+            if (u.host.isNullOrEmpty()) return null
+            val porta = if (u.port > 0) u.port else PORTA_PADRAO
+            "${u.protocol}://${u.host}:$porta"
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Pergunta ao endereço se ele é um Torres Comandas (rota pública /api/identificar). */
+    fun identificar(url: String, timeoutMs: Int = 2500): Sistema? {
+        return try {
+            val c = URL("$url/api/identificar").openConnection() as HttpURLConnection
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            c.useCaches = false
+            try {
+                if (c.responseCode != 200) return null
+                val j = JSONObject(c.inputStream.bufferedReader().readText())
+                if (j.optString("sistema") != "torres-comandas") return null
+                val app = j.optJSONObject("app")
+                Sistema(url, j.optString("id"), j.optString("loja", "Torres Comandas"), app?.optInt("versao_codigo") ?: 0)
+            } finally {
+                c.disconnect()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** IPs deste celular nas redes locais (Wi-Fi da loja). */
+    private fun ipsLocais(): List<Inet4Address> {
+        val lista = mutableListOf<Inet4Address>()
+        try {
+            for (interf in NetworkInterface.getNetworkInterfaces()) {
+                if (!interf.isUp || interf.isLoopback) continue
+                for (ip in interf.inetAddresses) {
+                    if (ip is Inet4Address && ip.isSiteLocalAddress) lista.add(ip)
+                }
+            }
+        } catch (e: Exception) {
+            // sem permissão para listar as interfaces: segue com o que tiver
+        }
+        return lista
+    }
+
+    /**
+     * Procura o sistema na rede: testa a porta em todos os endereços da
+     * mesma faixa do celular (ex.: 192.168.0.1 a 192.168.0.254). Leva poucos
+     * segundos. [aoAchar] é chamado a cada sistema encontrado.
+     */
+    fun procurar(portas: Collection<Int>, aoAchar: (Sistema) -> Unit = {}): List<Sistema> {
+        val achados = ConcurrentHashMap<String, Sistema>()
+        val pool = Executors.newFixedThreadPool(64)
+        for (ip in ipsLocais()) {
+            val b = ip.address
+            val prefixo = "${b[0].toInt() and 255}.${b[1].toInt() and 255}.${b[2].toInt() and 255}."
+            for (n in 1..254) {
+                val host = prefixo + n
+                for (porta in portas) {
+                    pool.execute {
+                        try {
+                            Socket().use { it.connect(InetSocketAddress(host, porta), 400) }
+                        } catch (e: Exception) {
+                            return@execute
+                        }
+                        val s = identificar("http://$host:$porta") ?: return@execute
+                        if (achados.putIfAbsent(s.id, s) == null) aoAchar(s)
+                    }
+                }
+            }
+        }
+        pool.shutdown()
+        pool.awaitTermination(40, TimeUnit.SECONDS)
+        return achados.values.toList()
+    }
+
+    fun portaDe(url: String?): Int = try {
+        URL(url).port.takeIf { it > 0 } ?: PORTA_PADRAO
+    } catch (e: Exception) {
+        PORTA_PADRAO
+    }
+
+    /** Requisição simples com o login do garçom (usada pelo serviço e pelas notificações). */
+    fun requisitar(ctx: Context, metodo: String, caminho: String, timeoutMs: Int = 6000): Pair<Int, String> {
+        val servidor = Preferencias.servidor(ctx) ?: return Pair(0, "")
+        val c = URL(servidor + caminho).openConnection() as HttpURLConnection
+        c.requestMethod = metodo
+        c.connectTimeout = timeoutMs
+        c.readTimeout = timeoutMs
+        c.useCaches = false
+        // Atualização automática: não conta como uso do sistema.
+        c.setRequestProperty("X-Automatico", "1")
+        Preferencias.cookie(ctx)?.let { c.setRequestProperty("Cookie", it) }
+        if (metodo == "POST") {
+            c.doOutput = true
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write("{}".toByteArray()) }
+        }
+        try {
+            val codigo = c.responseCode
+            val corpo = (if (codigo < 400) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
+            return Pair(codigo, corpo)
+        } finally {
+            c.disconnect()
+        }
+    }
+}

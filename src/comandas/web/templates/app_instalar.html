@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-tema="{{ tema }}">
+<head>
+  <meta charset="utf-8">
+  <title>Instalar o app do garçom — {{ loja }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <style>
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px; display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: start; }
+    .qr { background: #fff; padding: 12px; border-radius: 12px; }
+    .qr svg { display: block; width: 280px; height: 280px; }
+    ol { padding-left: 22px; line-height: 1.6; }
+    code { color: var(--destaque); word-break: break-all; }
+    @media (max-width: 640px) { main { grid-template-columns: 1fr; justify-items: center; } }
+  </style>
+</head>
+<body>
+  <header class="topo">
+    <h1>📱 App do garçom</h1><span class="espaco"></span>
+    <nav><a href="/">Início</a></nav>
+  </header>
+  <main>
+    <div class="qr">{{ qr|safe }}</div>
+    <div>
+      <h2 style="margin-top: 0">Aponte a câmera do celular para o QR code</h2>
+      <ol>
+        <li>O celular precisa estar no <strong>Wi-Fi da loja</strong>.</li>
+        <li>Abra o link que a câmera mostrar e toque em <strong>Baixar o app</strong>.</li>
+        <li>Instale (permita "instalar desta fonte" se o Android pedir) e toque em <strong>Abrir no app</strong>.</li>
+        <li>Entre com o usuário do garçom e permita as notificações.</li>
+      </ol>
+      <p class="dica">Endereço, se preferir digitar no navegador do celular: <code>{{ endereco }}</code></p>
+      {% if app_info %}
+      <p class="dica">Versão do app: {{ app_info.versao }} · O app avisa o garçom com notificação e vibração mesmo com o celular no bolso
+        ou em outro aplicativo, e reencontra este PC sozinho se o IP mudar.</p>
+      {% else %}
+      <p class="erro-dialogo">O arquivo do app não veio nesta instalação. Atualize o Torres Comandas pelo instalador mais recente.</p>
+      {% endif %}
+    </div>
+  </main>
+</body>
+</html>

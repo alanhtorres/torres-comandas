@@ -19,6 +19,11 @@ xl_datas, xl_binaries, xl_hidden = collect_all("openpyxl")
 # Só o backend de bandeja do sistema em que o build está rodando.
 bandeja = ["pystray._win32"] if sys.platform == "win32" else ["pystray._xorg", "pystray._appindicator"]
 
+# App Android do garçom (.apk gerado pelo GitHub Actions): vai junto para o
+# celular baixar direto deste PC, pela página /app.
+pasta_app = src / "comandas" / "app_android"
+app_android = [(str(pasta_app), "comandas/app_android")] if (pasta_app / "torres-garcom.apk").is_file() else []
+
 a = Analysis(
     [str(raiz / "main.py")],
     pathex=[str(src)],
@@ -26,7 +31,7 @@ a = Analysis(
     datas=[
         (str(src / "comandas" / "web" / "templates"), "comandas/web/templates"),
         (str(src / "comandas" / "web" / "static"), "comandas/web/static"),
-    ] + segno_datas + rl_datas + xl_datas,
+    ] + app_android + segno_datas + rl_datas + xl_datas,
     hiddenimports=["waitress", "comandas.bandeja"] + bandeja + segno_hidden + rl_hidden + xl_hidden,
     excludes=["tkinter", "pytest"],
     noarchive=False,

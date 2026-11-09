@@ -3,13 +3,32 @@
   const { api, moeda, el, minutosDesde, aviso, bip, somLiberado, liberarSom, dialogo } = window.C;
   const $ = (id) => document.getElementById(id);
 
-  let estado = { pedidos: [], contas: [], chamados_garcom: [], mesas: [], produtos: [] };
+  let estado = { pedidos: [], contas: [], chamados_garcom: [], mesas: [], produtos: [], comandas: [] };
   let produtos = [];
   let assinaturaProdutos = "";
   let categoriaAtiva = null;
   let mesa = "";
   let comandaId = null;
   const carrinho = new Map(); // produto_id -> {quantidade, observacao}
+  // Pedido em anotação fica guardado no aparelho: se o garçom sair do app (ou
+  // o Android fechar a página), ao voltar está tudo como estava.
+  const CHAVE_RASCUNHO = "garcom-rascunho";
+  function salvarRascunho() {
+    try {
+      localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify({
+        carrinho: [...carrinho], mesa, comandaId, aba: document.querySelector(".abas-rodape button.ativa")?.dataset.aba,
+      }));
+    } catch (e) { /* sem armazenamento: segue sem rascunho */ }
+  }
+  function lerRascunho() {
+    try { return JSON.parse(localStorage.getItem(CHAVE_RASCUNHO) || "null"); } catch (e) { return null; }
+  }
+  const rascunho = lerRascunho();
+  if (rascunho) {
+    (rascunho.carrinho || []).forEach(([id, item]) => { if (item && item.quantidade > 0) carrinho.set(id, item); });
+    mesa = rascunho.mesa || "";
+    comandaId = rascunho.comandaId || null;
+  }
   let chamadosVistos = null;
   let entregasVistas = null;
 
@@ -17,16 +36,26 @@
 
   document.querySelectorAll(".abas-rodape button").forEach((b) => b.addEventListener("click", () => abrirAba(b.dataset.aba)));
   function abrirAba(nome) {
+    if (!document.querySelector(`.abas-rodape button[data-aba="${nome}"]`)) nome = "novo";
+    if (location.hash !== "#" + nome) history.replaceState(null, "", "#" + nome);
     document.querySelectorAll(".abas-rodape button").forEach((b) => b.classList.toggle("ativa", b.dataset.aba === nome));
     document.querySelectorAll(".aba-garcom").forEach((s) => (s.hidden = s.id !== "aba-" + nome));
     renderBarra();
+    salvarRascunho();
     window.scrollTo({ top: 0 });
   }
+  // O app abre direto na aba certa ao tocar numa notificação (#entregar).
+  window.addEventListener("hashchange", () => abrirAba(location.hash.slice(1)));
   const abaAtual = () => document.querySelector(".abas-rodape button.ativa").dataset.aba;
 
   // --- Alertas (chamados do QR code e pedidos prontos) -----------------------
 
+  // Dentro do app Android (window.TorresApp), o próprio app toca o som e
+  // vibra: não depende de o garçom ter tocado na tela antes.
+  const app = window.TorresApp || null;
+
   function alertar(tipo) {
+    if (app) { try { app.alertar(tipo); return; } catch (e) { /* segue pelo navegador */ } }
     bip(tipo);
     // O navegador só deixa vibrar depois que o garçom tocou na tela uma vez.
     const tocou = !navigator.userActivation || navigator.userActivation.hasBeenActive;
@@ -47,6 +76,9 @@
   // --- Novo pedido ---------------------------------------------------------
 
   function renderMesas() {
+    // mesa digitada (fora da lista) que voltou do rascunho aparece no campo
+    const outra = $("mesa-outra");
+    if (mesa && !estado.mesas.includes(mesa) && outra.value !== mesa && document.activeElement !== outra) outra.value = mesa;
     const comConta = new Set(estado.contas.filter((c) => c.chave.startsWith("mesa:")).map((c) => c.chave.slice(5)));
     if (!estado.mesas.length) {
       $("mesas").replaceChildren(el("span", { class: "dica" }, "Nenhuma mesa cadastrada — digite abaixo."));
@@ -132,6 +164,7 @@
   }
 
   function renderBarra() {
+    salvarRascunho();
     const { total, qtd } = resumoCarrinho();
     const barra = $("barra-pedido");
     barra.hidden = !qtd || abaAtual() !== "novo";
@@ -268,10 +301,16 @@
     entregasVistas = idsEntrega;
   }
 
-  function checarSom() { $("ativar-som").hidden = somLiberado(); }
+  function checarSom() { if ($("ativar-som")) $("ativar-som").hidden = somLiberado(); }
   setTimeout(checarSom, 1500);
   setInterval(checarSom, 10000);
-  $("ativar-som").addEventListener("click", () => { liberarSom(); alertar("novo"); $("ativar-som").hidden = true; });
+  $("ativar-som")?.addEventListener("click", () => { liberarSom(); alertar("novo"); $("ativar-som").hidden = true; });
+
+  abrirAba(location.hash.slice(1) || (rascunho && rascunho.aba) || "novo");
+  if (app) {
+    $("ativar-som").remove();
+    document.querySelector(".topo nav").prepend(el("a", { href: "#", onclick: (e) => { e.preventDefault(); app.configuracoes(); } }, "⚙️ App"));
+  }
 
   const monitor = C.acompanhar("/api/estado", aplicar, 2000);
   setInterval(() => monitor.forcar(), 30000);

@@ -1,6 +1,7 @@
-# Gera o instalador do Windows num Windows da nuvem do GitHub, testa o
-# programa empacotado e o instalador de verdade, e — quando é uma versão
-# (tag v1.2.3) — publica o TorresComandas-Setup-x.y.z.exe na página Releases.
+# Gera o app Android do garçom e o testa num Android emulado; depois gera o
+# instalador do Windows (com o app dentro) num Windows da nuvem do GitHub,
+# testa o programa empacotado e o instalador de verdade, e — quando é uma
+# versão (tag v1.2.3) — publica o instalador e o .apk na página Releases.
 name: Instalador Windows
 
 on:
@@ -12,13 +13,127 @@ permissions:
   contents: write
 
 jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      # A chave precisa ser sempre a mesma, senão o celular não aceita a
+      # atualização por cima. Numa versão (tag), sem a chave não publica.
+      - name: Chave de assinatura do app
+        env:
+          CHAVE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          CHAVE_SENHA: ${{ secrets.ANDROID_KEYSTORE_SENHA }}
+        run: |
+          if [ -n "$CHAVE_B64" ]; then
+            echo "$CHAVE_B64" | base64 -d > "$RUNNER_TEMP/torres-garcom.p12"
+            echo "ANDROID_KEYSTORE=$RUNNER_TEMP/torres-garcom.p12" >> "$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_SENHA=$CHAVE_SENHA" >> "$GITHUB_ENV"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error::Faltam os segredos ANDROID_KEYSTORE_B64 e ANDROID_KEYSTORE_SENHA"; exit 1
+          else
+            echo "::warning::Sem a chave da loja: app assinado só para teste"
+          fi
+
+      - name: Gerar o app (.apk)
+        run: |
+          gradle -p android assembleRelease --no-daemon --stacktrace
+          mkdir -p saida-android
+          cp android/app/build/outputs/apk/release/app-release.apk saida-android/torres-garcom.apk
+          python3 - <<'PY'
+          import json, re
+          v = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', open("src/comandas/__init__.py").read()).groups()
+          a, b, c = map(int, v)
+          json.dump({"versionName": f"{a}.{b}.{c}", "versionCode": a * 10000 + b * 100 + c},
+                    open("saida-android/torres-garcom.json", "w"))
+          PY
+          cat saida-android/torres-garcom.json
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          "$apksigner" verify --print-certs saida-android/torres-garcom.apk | tee assinatura.txt
+          if [ -n "$ANDROID_KEYSTORE" ] && ! grep -q "CN=Torres Comandas" assinatura.txt; then
+            echo "::error::O app não saiu assinado com a chave da loja"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-android
+          path: saida-android/
+
+  android-teste:
+    needs: android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-android
+          path: src/comandas/app_android
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sistema rodando (para o app conectar)
+        run: |
+          python -m pip install -r requirements.txt websocket-client
+          mkdir -p "$RUNNER_TEMP/dados"
+          COMANDAS_DADOS="$RUNNER_TEMP/dados" nohup python main.py --porta 8090 --sem-bandeja > "$RUNNER_TEMP/servidor.log" 2>&1 &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:8090/api/identificar && break; sleep 1; done
+
+      - name: Liberar espaço em disco (o emulador precisa de alguns GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/lib/android/sdk/ndk
+          df -h /
+
+      - name: Habilitar KVM (emulador rápido)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Testar o app num Android emulado
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          cores: 4
+          disk-size: 3000M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
+          script: python build_tools/testar_app_android.py src/comandas/app_android/torres-garcom.apk fotos-android
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fotos-app-android
+          path: |
+            fotos-android/
+            ${{ runner.temp }}/servidor.log
+
   windows:
+    needs: [android, android-teste]
     runs-on: windows-latest
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-android
+          path: src/comandas/app_android
 
       - uses: actions/setup-python@v5
         with:
@@ -66,4 +181,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $setup = Get-ChildItem installer\Output\TorresComandas-Setup-*.exe | Select-Object -First 1
-          gh release create "${{ github.ref_name }}" $setup.FullName --title "Torres Comandas ${{ github.ref_name }}" --notes "Baixe o TorresComandas-Setup e dê dois cliques para instalar. Instruções completas no README."
+          gh release create "${{ github.ref_name }}" $setup.FullName "src\comandas\app_android\torres-garcom.apk" --title "Torres Comandas ${{ github.ref_name }}" --notes "Baixe o TorresComandas-Setup e dê dois cliques para instalar. O app do garçom (torres-garcom.apk) já vem dentro do instalador: no celular, abra a página /app do sistema pelo QR code da tela inicial. Instruções completas no README."

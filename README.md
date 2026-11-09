@@ -73,6 +73,34 @@ e vibração (toque uma vez na tela para o navegador liberar o som). A aba
 as contas abertas (com botão para imprimir a conferência, se houver impressora
 do caixa).
 
+O pedido que está sendo anotado fica guardado no aparelho: se o garçom sair da
+página (ou o celular fechar o navegador), ao voltar a mesa e os itens estão lá.
+
+### App Android do garçom
+
+Mais prático que o navegador: abre direto na tela do garçom, não se perde ao
+sair e voltar, e **avisa com notificação, som e vibração mesmo com o celular no
+bolso, a tela apagada ou outro app aberto** (mesa chamando, pedindo a conta,
+pedido pronto para levar). A notificação do chamado tem o botão **✓ Atendi**.
+
+Instalação (sem Play Store e sem internet — o celular baixa direto do PC):
+1. No PC, na tela inicial do sistema, abra **📱 App do garçom** e aponte a câmera
+   do celular para o QR code (o celular precisa estar no Wi-Fi da loja).
+2. Toque em **Baixar o app**, instale (permita "instalar desta fonte") e toque em
+   **Abrir no app**: ele já abre ligado ao PC.
+3. Entre com o usuário do garçom e permita as notificações.
+
+Também dá para abrir o app e tocar em **Procurar o sistema na rede**. Se o IP do PC
+mudar, o app reencontra o sistema sozinho. Enquanto o turno está ativo aparece
+um aviso fixo na barra do celular; ao final do dia, **⚙️ App → Encerrar turno**.
+Em alguns celulares (Xiaomi, Samsung) vale tocar em **⚙️ App → Não deixar o
+Android pausar os avisos**. Quando o sistema é atualizado, o app avisa que há
+versão nova e é só baixar de novo pela mesma página.
+
+O .apk também fica na página Releases do GitHub. Ele é assinado com a chave da
+loja (segredos `ANDROID_KEYSTORE_B64` e `ANDROID_KEYSTORE_SENHA` do repositório):
+use sempre a mesma chave, senão o Android não instala a atualização por cima.
+
 ## Comandas com cadastro do cliente
 
 Modo opcional (Administração → Configurações → "Comandas e clientes"). Todo cliente
@@ -307,8 +335,10 @@ src/comandas/
   impressora.py             cupons ESC/POS (cozinha, conta, fechamento) e envio TCP
   exportar.py               relatório para download em PDF (reportlab) ou Excel (openpyxl)
   web/templates, web/static telas (HTML/CSS/JS puro, sem build)
+  app_android/              o .apk do garçom entra aqui no build (para a página /app)
+android/                    app Android do garçom (Kotlin, sem bibliotecas externas)
 tests/
-build_tools/                PyInstaller (.spec), script de build e teste do .exe
+build_tools/                PyInstaller (.spec), script de build, teste do .exe e do app no Android emulado
 installer/installer.iss     instalador (Inno Setup)
 .github/workflows/          build automático do instalador no GitHub
 ```

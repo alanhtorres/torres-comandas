@@ -1,0 +1,3 @@
+Aqui o GitHub Actions coloca o app Android do garçom (torres-garcom.apk e
+torres-garcom.json) antes de gerar o instalador do Windows. O servidor
+entrega esse arquivo na página /app para o celular baixar pelo Wi-Fi.

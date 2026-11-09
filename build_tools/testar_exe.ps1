@@ -60,7 +60,13 @@ try {
     if ([Text.Encoding]::ASCII.GetString($pdf.RawContentStream.ToArray()[0..3]) -ne "%PDF") { throw "PDF não foi gerado" }
     $xlsx = Invoke-WebRequest "$base/api/relatorios/exportar?formato=xlsx&secoes=resumo,vendas,produtos" -WebSession $s -UseBasicParsing
     if ([Text.Encoding]::ASCII.GetString($xlsx.RawContentStream.ToArray()[0..1]) -ne "PK") { throw "Planilha Excel não foi gerada" }
-    Write-Host "OK: $Exe funcionando (login, telas, pedido, painel, caixa, histórico, QR code, backup, comanda, PDF, Excel)" -ForegroundColor Green
+    # App Android do garçom embutido: o celular baixa direto deste PC
+    $ident = Invoke-RestMethod "$base/api/identificar"
+    if (-not $ident.app -or $ident.app.versao_codigo -le 0) { throw "O app Android não veio no programa empacotado" }
+    $apk = Invoke-WebRequest "$base/app/torres-garcom.apk" -UseBasicParsing
+    if ([Text.Encoding]::ASCII.GetString($apk.RawContentStream.ToArray()[0..1]) -ne "PK") { throw "Download do app Android falhou" }
+    if ((Invoke-WebRequest "$base/app" -UseBasicParsing).Content -notmatch "Baixar o app") { throw "Página /app sem o botão de baixar" }
+    Write-Host "OK: $Exe funcionando (login, telas, pedido, painel, caixa, histórico, QR code, backup, comanda, PDF, Excel, app Android)" -ForegroundColor Green
 }
 finally {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue

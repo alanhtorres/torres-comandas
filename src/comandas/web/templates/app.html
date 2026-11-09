@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-tema="{{ tema }}">
+<head>
+  <meta charset="utf-8">
+  <title>App do garçom — {{ loja }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <style>
+    main { max-width: 480px; margin: 0 auto; padding: 20px 16px 40px; }
+    h1 { margin: 0 0 4px; font-size: 1.5rem; }
+    .passo { display: flex; gap: 12px; align-items: flex-start; margin: 18px 0; }
+    .passo .n { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--destaque); color: #0f172a;
+      font-weight: 800; display: grid; place-items: center; }
+    .passo p { margin: 4px 0 10px; color: var(--texto-2); }
+    a.botao { display: block; text-align: center; padding: 14px; border-radius: 10px; font-weight: 700; text-decoration: none; font-size: 1.1rem; }
+    a.baixar { background: var(--verde); color: #052e16; }
+    a.conectar { background: var(--destaque); color: #0f172a; }
+    .dica { color: var(--texto-2); font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>📱 App do garçom</h1>
+    <p class="dica">{{ loja }} · funciona pelo Wi-Fi da loja, sem internet</p>
+    {% if app_info %}
+    <div class="passo"><span class="n">1</span><div>
+      <strong>Baixe e instale o app</strong>
+      <p>Se o Android pedir, permita "instalar apps desta fonte" (é o próprio sistema da loja). Versão {{ app_info.versao }}, {{ app_info.tamanho_mb }} MB.</p>
+      <a class="botao baixar" href="{{ url_apk }}">⬇ Baixar o app</a>
+    </div></div>
+    <div class="passo"><span class="n">2</span><div>
+      <strong>Conecte o app a este sistema</strong>
+      <p>Depois de instalado, toque aqui: o app já abre ligado a este PC ({{ url_base }}). Também dá para abrir o app e tocar em "Procurar na rede".</p>
+      <a class="botao conectar" href="{{ url_conectar }}">Abrir no app</a>
+    </div></div>
+    <div class="passo"><span class="n">3</span><div>
+      <strong>Entre com o seu usuário de garçom</strong>
+      <p>Na primeira vez o app pede para mostrar notificações: permita, é assim que chegam os chamados das mesas com o celular no bolso.</p>
+    </div></div>
+    <p class="dica">Para atualizar, é só baixar de novo aqui quando o sistema for atualizado: o app avisa quando tiver versão nova.</p>
+    {% else %}
+    <p>O app ainda não está disponível nesta instalação. Atualize o Torres Comandas no PC para a versão mais recente.</p>
+    <p class="dica">Enquanto isso, o garçom pode usar pelo navegador: <a href="/garcom">{{ url_base }}/garcom</a></p>
+    {% endif %}
+  </main>
+</body>
+</html>
