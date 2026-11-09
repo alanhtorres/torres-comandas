@@ -3,6 +3,7 @@ administração) e a API que todas elas usam. Cada página e cada ação confere
 se o usuário logado tem a permissão correspondente."""
 import io
 import logging
+import secrets
 import sys
 import threading
 import time
@@ -19,7 +20,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from . import impressora
 from .exportar import SECOES, exportar
-from .banco import FORMAS_PAGAMENTO, MODELOS, PERMISSOES, PERMISSOES_ADMIN, Banco, ErroNegocio
+from .banco import FORMAS_PAGAMENTO, MODELOS, PERMISSOES, PERMISSOES_ADMIN, PERMISSOES_OPERACIONAIS, Banco, ErroNegocio
 
 EXT_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 # Formatos que qualquer navegador de TV/celular toca sem conversão.
@@ -51,6 +52,10 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     app.secret_key = banco.secret_key()
     app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
     app.permanent_session_lifetime = timedelta(days=60)
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # Muda a cada vez que o programa abre: contas sensíveis logadas antes
+    # precisam entrar de novo (antes o navegador abria já logado no admin).
+    inicio_servidor = secrets.token_hex(8)
     # Mantém a ordem definida no código (formas de pagamento, permissões):
     # por padrão o Flask ordenaria alfabeticamente ("Crédito" antes de "Dinheiro").
     app.json.sort_keys = False
@@ -78,12 +83,58 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
 
     # --- Usuário logado e permissões ----------------------------------------
 
+    MOTIVOS_SAIDA = {
+        "reinicio": "O programa foi reiniciado. Entre de novo para continuar.",
+        "inatividade": "Sua sessão terminou por falta de uso. Entre de novo para continuar.",
+        "senha": "A senha deste usuário foi alterada. Entre com a senha nova.",
+    }
+
+    def sensivel(usuario) -> bool:
+        return any(p not in PERMISSOES_OPERACIONAIS for p in usuario["permissoes"])
+
+    def iniciar_sessao(usuario):
+        session.clear()
+        session.permanent = True
+        session["usuario_id"] = usuario["id"]
+        session["selo"] = banco.selo_sessao(usuario["id"])
+        session["inicio"] = inicio_servidor
+        session["uso"] = time.time()
+
+    def motivo_para_encerrar(usuario):
+        if "selo" not in session:  # login de antes desta versão
+            return "reinicio"
+        if session.get("selo") != banco.selo_sessao(usuario["id"]):
+            return "senha"
+        if not sensivel(usuario):
+            return None
+        if session.get("inicio") != inicio_servidor:
+            return "reinicio"
+        minutos = max(0, int(banco.config().get("minutos_inatividade") or 0))
+        if minutos and time.time() - float(session.get("uso") or 0) > minutos * 60:
+            return "inatividade"
+        return None
+
     def usuario_atual():
         if "usuario" not in g:
+            g.usuario = None
+            g.motivo_saida = None
             uid = session.get("usuario_id")
             usuario = banco.obter_usuario(uid) if uid else None
             # Usuário desativado (ou excluído) perde o acesso na hora, mesmo logado.
-            g.usuario = usuario if usuario and usuario["ativo"] else None
+            if usuario and usuario["ativo"]:
+                motivo = motivo_para_encerrar(usuario)
+                if motivo:
+                    session.clear()
+                    g.motivo_saida = motivo
+                    if motivo == "inatividade":
+                        banco.registrar_acao({"id": usuario["id"], "nome": usuario["nome"]}, "Saiu por inatividade")
+                else:
+                    g.usuario = usuario
+                    # As atualizações automáticas das telas (X-Automatico) não
+                    # contam como uso: só cliques e páginas abertas renovam.
+                    agora = time.time()
+                    if not request.headers.get("X-Automatico") and agora - float(session.get("uso") or 0) > 15:
+                        session["uso"] = agora
         return g.usuario
 
     def ator():
@@ -105,9 +156,11 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
                         return jsonify({"ok": False, "erro": "Crie o administrador no primeiro acesso."}), 401
                     return redirect(url_for("primeiro_acesso"))
                 if not usuario_atual():
+                    motivo = g.get("motivo_saida")
                     if api:
-                        return jsonify({"ok": False, "erro": "Faça login para continuar."}), 401
-                    return redirect(url_for("login", proximo=request.path))
+                        return jsonify({"ok": False, "erro": MOTIVOS_SAIDA.get(motivo, "Faça login para continuar."),
+                                        "motivo": motivo}), 401
+                    return redirect(url_for("login", proximo=request.path, motivo=motivo))
                 if permissoes and not pode(*permissoes):
                     if api:
                         return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
@@ -132,17 +185,38 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def login():
         if not banco.existe_usuario():
             return redirect(url_for("primeiro_acesso"))
-        return render_template("login.html", erro=None)
+        return render_template("login.html", erro=None, aviso=MOTIVOS_SAIDA.get(request.args.get("motivo")))
+
+    # Quem erra a senha muitas vezes seguidas fica um tempo sem poder tentar
+    # (por aparelho), para ninguém ficar chutando senhas.
+    tentativas = {}
+    trava_tentativas = threading.Lock()
+    MAX_TENTATIVAS, JANELA_TENTATIVAS = 5, 5 * 60
+
+    def bloqueado_ate(ip) -> float:
+        with trava_tentativas:
+            recentes = [x for x in tentativas.get(ip, []) if time.time() - x < JANELA_TENTATIVAS]
+            tentativas[ip] = recentes
+            return recentes[0] + JANELA_TENTATIVAS if len(recentes) >= MAX_TENTATIVAS else 0
 
     @app.post("/login")
     def login_post():
+        ip = request.remote_addr or "?"
+        ate = bloqueado_ate(ip)
+        if ate:
+            minutos = max(1, round((ate - time.time()) / 60))
+            return render_template("login.html", erro=f"Muitas tentativas erradas. Aguarde {minutos} minuto(s) e tente de novo."), 429
         usuario = banco.autenticar(request.form.get("usuario", ""), request.form.get("senha", ""))
         if not usuario:
+            with trava_tentativas:
+                tentativas.setdefault(ip, []).append(time.time())
             time.sleep(1)  # atrasa quem tenta adivinhar senhas
+            if bloqueado_ate(ip):
+                banco.registrar_acao(None, "Login bloqueado por tentativas", f"aparelho {ip}: {MAX_TENTATIVAS} senhas erradas seguidas")
             return render_template("login.html", erro="Usuário ou senha incorretos."), 401
-        session.clear()
-        session.permanent = True
-        session["usuario_id"] = usuario["id"]
+        with trava_tentativas:
+            tentativas.pop(ip, None)
+        iniciar_sessao(usuario)
         return redirect(_destino_seguro(request.args.get("proximo")))
 
     @app.get("/sair")
@@ -170,9 +244,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
                                                   "senha": form.get("senha")})
         except ErroNegocio as exc:
             return render_template("primeiro_acesso.html", erro=str(exc)), 400
-        session.clear()
-        session.permanent = True
-        session["usuario_id"] = usuario["id"]
+        iniciar_sessao(usuario)
         return redirect("/admin#usuarios")
 
     @app.get("/api/eu")
@@ -185,6 +257,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def api_minha_senha():
         dados = request.get_json(silent=True) or {}
         banco.trocar_propria_senha(ator(), dados.get("atual", ""), dados.get("nova", ""))
+        # continua logado neste aparelho; os outros aparelhos saem
+        session["selo"] = banco.selo_sessao(usuario_atual()["id"])
         return jsonify({"ok": True})
 
     # --- Telas ---------------------------------------------------------------

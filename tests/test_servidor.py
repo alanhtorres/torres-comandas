@@ -666,3 +666,98 @@ def test_transmissao_contatos_vcf_e_marcar_em_lote(ambiente, admin):
     porteiro = entrar(app, "porteiro")
     assert porteiro.get("/api/campanhas/contatos.vcf?publico=todos").status_code == 403
     assert porteiro.post("/api/mensagens/lote", json={"cliente_ids": [a["id"]]}).status_code == 403
+
+
+# --- Segurança das sessões ----------------------------------------------------
+
+def _mesmo_cookie(origem, app_novo):
+    """Simula o navegador (que guarda o cookie) abrindo o programa reiniciado."""
+    cliente = app_novo.test_client()
+    cliente.set_cookie("session", origem.get_cookie("session").value)
+    return cliente
+
+
+def test_reiniciar_programa_desloga_contas_sensiveis_mas_nao_a_cozinha(ambiente, admin, tmp_path):
+    app, banco, _ = ambiente
+    criar_usuario(admin, "cozinha", ["cozinha"])
+    cozinha = entrar(app, "cozinha")
+    reiniciado = criar_app(banco, tmp_path, url_base_padrao="http://x", impressao_sincrona=True)
+    admin2 = _mesmo_cookie(admin, reiniciado)
+    r = admin2.get("/api/estado")
+    assert r.status_code == 401 and r.get_json()["motivo"] == "reinicio"
+    pagina = _mesmo_cookie(admin, reiniciado).get("/admin")
+    assert pagina.status_code == 302 and "motivo=reinicio" in pagina.headers["Location"]
+    assert "foi reiniciado".encode() in reiniciado.test_client().get("/login?motivo=reinicio").data
+    assert _mesmo_cookie(cozinha, reiniciado).get("/api/estado").status_code == 200
+    # entrando de novo, funciona normalmente
+    assert entrar(reiniciado, "ana").get("/api/estado").status_code == 200
+
+
+def test_inatividade_desloga_e_atualizacao_automatica_nao_conta_como_uso(ambiente, admin):
+    app, banco, _ = ambiente
+    banco.salvar_config({"minutos_inatividade": 1})
+    with admin.session_transaction() as s:
+        s["uso"] -= 50
+        uso = s["uso"]
+    assert admin.get("/api/estado", headers={"X-Automatico": "1"}).status_code == 200
+    with admin.session_transaction() as s:
+        assert s["uso"] == uso  # a tela se atualizando sozinha não renova
+    assert admin.get("/api/estado").status_code == 200
+    with admin.session_transaction() as s:
+        assert s["uso"] > uso  # um clique de verdade renova
+        s["uso"] -= 61
+    r = admin.get("/api/estado", headers={"X-Automatico": "1"})
+    assert r.status_code == 401 and r.get_json()["motivo"] == "inatividade"
+    assert admin.get("/api/estado").status_code == 401  # saiu de vez
+    from datetime import datetime
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    assert any(x["acao"] == "Saiu por inatividade" for x in banco.listar_auditoria(hoje, hoje))
+    # 0 = nunca
+    banco.salvar_config({"minutos_inatividade": 0})
+    admin = entrar(app, "ana")
+    with admin.session_transaction() as s:
+        s["uso"] -= 10 * 86400
+    assert admin.get("/api/estado").status_code == 200
+
+
+def test_garcom_nao_sai_por_inatividade(ambiente, admin):
+    app, banco, _ = ambiente
+    banco.salvar_config({"minutos_inatividade": 5})
+    criar_usuario(admin, "garcom", ["garcom", "pedidos"])
+    garcom = entrar(app, "garcom")
+    with garcom.session_transaction() as s:
+        s["uso"] -= 86400
+    assert garcom.get("/api/estado").status_code == 200
+
+
+def test_trocar_senha_desloga_os_outros_aparelhos(ambiente, admin):
+    app, banco, _ = ambiente
+    u = criar_usuario(admin, "cozinha", ["cozinha"])
+    tv = entrar(app, "cozinha")
+    tablet = entrar(app, "cozinha")
+    assert admin.put(f"/api/usuarios/{u['id']}", json={"senha": "nova123"}).status_code == 200
+    r = tv.get("/api/estado")
+    assert r.status_code == 401 and r.get_json()["motivo"] == "senha"
+    tablet = entrar(app, "cozinha", "nova123")
+    outro = entrar(app, "cozinha", "nova123")
+    assert tablet.post("/api/minha-senha", json={"atual": "nova123", "nova": "outra123"}).status_code == 200
+    assert tablet.get("/api/estado").status_code == 200  # quem trocou continua
+    assert outro.get("/api/estado").status_code == 401
+
+
+def test_muitas_senhas_erradas_bloqueiam_o_aparelho(ambiente, admin, monkeypatch):
+    app, banco, _ = ambiente
+    import comandas.servidor as srv
+    monkeypatch.setattr(srv.time, "sleep", lambda s: None)
+    c = app.test_client()
+    for _ in range(5):
+        assert c.post("/login", data={"usuario": "ana", "senha": "errada"}).status_code == 401
+    r = c.post("/login", data={"usuario": "ana", "senha": "1234"})
+    assert r.status_code == 429 and "Aguarde".encode() in r.data
+    from datetime import datetime
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    assert any(x["acao"] == "Login bloqueado por tentativas" for x in banco.listar_auditoria(hoje, hoje))
+    # outro aparelho não é afetado
+    outro = app.test_client()
+    assert outro.post("/login", data={"usuario": "ana", "senha": "1234"},
+                      environ_base={"REMOTE_ADDR": "192.168.0.50"}).status_code == 302

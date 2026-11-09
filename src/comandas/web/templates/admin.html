@@ -249,6 +249,25 @@
         </div>
 
         <div class="cartao">
+          <h2>Segurança</h2>
+          <label for="cfg-minutos_inatividade">Sair sozinho depois de quanto tempo sem uso</label>
+          <select id="cfg-minutos_inatividade" name="minutos_inatividade">
+            <option value="5">5 minutos</option>
+            <option value="15">15 minutos</option>
+            <option value="30">30 minutos</option>
+            <option value="60">1 hora</option>
+            <option value="120">2 horas</option>
+            <option value="240">4 horas</option>
+            <option value="0">Nunca (não recomendado)</option>
+          </select>
+          <p class="dica">Vale para quem mexe com dinheiro, clientes ou administração (caixa, administrador…): essas contas
+            também saem sempre que o programa é reiniciado, e precisam entrar com a senha de novo. Contas só de cozinha,
+            garçom ou entrada continuam logadas, para a tela da cozinha não parar de mostrar pedidos.
+            Quando a senha de alguém é trocada, essa pessoa sai de todos os aparelhos. Depois de 5 senhas erradas
+            seguidas, o aparelho fica 5 minutos sem poder tentar.</p>
+        </div>
+
+        <div class="cartao">
           <h2>Pedidos e painel</h2>
           <label class="inline"><input type="checkbox" name="pedidos_qrcode_ativo"> Aceitar pedidos pelo QR code das mesas</label>
           <label class="inline"><input type="checkbox" name="chamar_ao_ficar_pronto"> Chamar no painel automaticamente quando a cozinha marcar "pronto" (sem esperar o caixa)</label>

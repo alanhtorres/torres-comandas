@@ -13,12 +13,16 @@
     input { font-size: 1.15rem; }
     button { width: 100%; margin-top: 16px; }
     .erro { color: #fecaca; background: #450a0a; border-radius: 8px; padding: 8px 10px; }
+    .aviso-saida { color: #fde68a; background: #422006; border-radius: 8px; padding: 8px 10px; }
+    :root[data-tema="claro"] .erro { color: #991b1b; background: #fee2e2; }
+    :root[data-tema="claro"] .aviso-saida { color: #78350f; background: #fef3c7; }
   </style>
 </head>
 <body>
   <main class="cartao">
     <h1>{{ loja }}</h1>
     <p class="sub">Acesso da equipe</p>
+    {% if aviso and not erro %}<p class="aviso-saida">{{ aviso }}</p>{% endif %}
     <form method="post">
       <label for="usuario">Usuário</label>
       <input id="usuario" name="usuario" autocomplete="username" autocapitalize="none" autofocus required>

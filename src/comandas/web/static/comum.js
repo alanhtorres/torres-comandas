@@ -2,6 +2,13 @@
 (function () {
   "use strict";
 
+  // Volta para a mesma tela depois de entrar, mostrando por que saiu.
+  async function irParaLogin(res) {
+    let motivo = "";
+    try { motivo = (await res.clone().json()).motivo || ""; } catch (e) { /* sem corpo */ }
+    location.href = "/login?proximo=" + encodeURIComponent(location.pathname) + (motivo ? "&motivo=" + motivo : "");
+  }
+
   async function api(metodo, url, corpo) {
     const opcoes = { method: metodo, headers: {}, cache: "no-store" };
     if (corpo instanceof FormData) {
@@ -12,7 +19,7 @@
     }
     const res = await fetch(url, opcoes);
     if (res.status === 401 && !url.startsWith("/api/cliente")) {
-      location.href = "/login?proximo=" + encodeURIComponent(location.pathname);
+      irParaLogin(res);
       throw new Error("Sessão expirada.");
     }
     let dados = {};
@@ -146,9 +153,10 @@
       emAndamento = true;
       try {
         const sep = url.includes("?") ? "&" : "?";
-        const res = await fetch(url + (versao ? sep + "v=" + versao : ""), { cache: "no-store" });
+        // X-Automatico: atualização da tela, não conta como uso (inatividade)
+        const res = await fetch(url + (versao ? sep + "v=" + versao : ""), { cache: "no-store", headers: { "X-Automatico": "1" } });
         if (res.status === 401) {
-          location.href = "/login?proximo=" + encodeURIComponent(location.pathname);
+          await irParaLogin(res);
           return;
         }
         if (!res.ok) throw new Error("HTTP " + res.status);

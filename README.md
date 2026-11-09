@@ -49,6 +49,19 @@ mais comuns; depois é só ajustar. Tirar uma permissão ou desativar um usuári
 **na hora**, mesmo que ele esteja logado. O sistema não deixa ficar sem nenhum
 usuário capaz de administrar usuários.
 
+### Segurança do login
+
+- Contas com acesso a dinheiro, clientes ou administração (caixa, administrador…)
+  **saem sozinhas quando o programa é reiniciado** e depois de um tempo sem uso
+  (padrão 30 minutos; ajuste em Configurações → Segurança). A tela volta para o login
+  explicando o motivo e, depois de entrar, abre de novo onde estava.
+- Contas só de cozinha, garçom ou entrada continuam logadas, para a tela da cozinha
+  não parar de mostrar pedidos.
+- A atualização automática das telas não conta como uso: só cliques e páginas abertas.
+- Trocar a senha de alguém tira essa pessoa de todos os aparelhos.
+- Depois de 5 senhas erradas seguidas, o aparelho fica 5 minutos sem poder tentar
+  (fica registrado no histórico).
+
 ## Página do garçom
 
 Feita para celular ou tablet. O garçom escolhe a mesa, toca nos produtos (com

@@ -7,6 +7,7 @@ Tudo passa por uma única conexão protegida por lock, e cada operação que
 altera dados grava, na MESMA transação, o registro de quem fez o quê no
 histórico (auditoria) — ou as duas coisas ficam salvas, ou nenhuma."""
 import csv
+import hashlib
 import io
 import json
 import secrets
@@ -63,6 +64,9 @@ CONFIG_PADRAO = {
     # Modo comanda: cada cliente que entra recebe uma comanda (cartão),
     # aberta com cadastro (nome e telefone obrigatórios).
     "modo_comandas_ativo": False,
+    # Contas com acesso a dinheiro ou administração saem sozinhas depois de
+    # tantos minutos sem uso (0 = nunca). Ver PERMISSOES_OPERACIONAIS.
+    "minutos_inatividade": 30,
     # DDD usado quando o telefone é digitado sem ele (ex.: "11"). Vazio = exige DDD.
     "ddd_padrao": "",
     # Como abrir o WhatsApp para enviar: "web" (WhatsApp Web no navegador),
@@ -103,6 +107,13 @@ ORIGENS = {"caixa": "Caixa", "qrcode": "QR code", "garcom": "Garçom"}
 
 # Permissões que dão acesso à tela de administração.
 PERMISSOES_ADMIN = ("cardapio", "mesas", "midias", "clientes", "configuracoes", "relatorios", "historico", "usuarios")
+
+# Contas que só têm estas permissões (telas de trabalho: cozinha, garçom,
+# entrada) continuam logadas quando o programa reinicia ou fica parado —
+# uma TV da cozinha deslogada sozinha deixaria pedidos sem ninguém ver.
+# Qualquer outra permissão (dinheiro, clientes, administração) torna a conta
+# "sensível": sai ao reiniciar o programa e por inatividade.
+PERMISSOES_OPERACIONAIS = frozenset({"pedidos", "garcom", "cozinha", "comandas"})
 
 # Modelos prontos para preencher as permissões de um usuário novo.
 MODELOS = {
@@ -589,6 +600,13 @@ class Banco:
     def listar_usuarios(self) -> list:
         with self.lock:
             return [self._usuario_dict(l) for l in self.conn.execute("SELECT * FROM usuarios ORDER BY nome COLLATE NOCASE")]
+
+    def selo_sessao(self, usuario_id) -> str:
+        """Muda quando a senha do usuário muda: invalida os logins abertos
+        em outros aparelhos (ex.: o administrador redefiniu a senha)."""
+        with self.lock:
+            linha = self.conn.execute("SELECT senha_hash FROM usuarios WHERE id = ?", (usuario_id,)).fetchone()
+        return hashlib.sha256(linha["senha_hash"].encode()).hexdigest()[:16] if linha else ""
 
     def obter_usuario(self, usuario_id) -> Optional[dict]:
         with self.lock:
