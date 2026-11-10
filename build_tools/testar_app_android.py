@@ -132,7 +132,21 @@ class Pagina:
 
 
 pagina = Pagina()
-esperar("página de login no app", lambda: (pagina.js("location.pathname") or "") == "/login", 60)
+
+
+def login_na_frente():
+    # Logo depois de ligar, o emulador às vezes põe a tela inicial do Android
+    # por cima do app: traz o app de volta para a frente e tenta de novo.
+    if f"{PACOTE}/" not in adb("shell", "dumpsys", "activity", "activities").split("ResumedActivity")[1][:300]:
+        adb("shell", "am", "start", "-n", f"{PACOTE}/.MainActivity", check=False)
+    return (pagina.js("location.pathname") or "") == "/login"
+
+
+try:
+    esperar("página de login no app", login_na_frente, 90)
+except AssertionError:
+    (FOTOS / "logcat.txt").write_text(adb("logcat", "-d", "-t", "800", check=False), encoding="utf-8")
+    raise
 foto("1-login")
 
 passo("Entrando como garçom")
