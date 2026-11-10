@@ -75,6 +75,8 @@ label.inline input { width: auto; }
 .topo .espaco { flex: 1; }
 .topo nav a { color: var(--texto-2); text-decoration: none; margin-left: 12px; font-size: 0.9rem; }
 .topo nav a:hover { color: var(--texto); }
+/* Dentro de uma aba do programa, a barra de abas de cima já tem "Sair" e as outras telas. */
+html.embutido .topo nav { display: none; }
 
 .cartao {
   background: var(--painel);

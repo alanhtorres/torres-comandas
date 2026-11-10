@@ -46,6 +46,10 @@ CONFIG_PADRAO = {
     "impressora_cozinha_host": "",
     "impressora_cozinha_porta": 9100,
     "impressora_cozinha_usb": "",
+    # Tela do bar (como a da cozinha): os produtos com destino "bar" esperam
+    # o bar marcar "pronto". Desligada, o bar só imprime e esses itens não
+    # seguram o pedido.
+    "tela_bar": False,
     # Impressora do bar: os produtos com destino "bar" (bebidas, drinks...).
     "impressora_bar_ativa": False,
     "impressora_bar_tipo": "rede",
@@ -83,7 +87,7 @@ CONFIG_PRIVADA = {"secret_key", "versao_permissoes", "id_instalacao"}
 PERMISSOES = {
     "pedidos": "Caixa: lançar e acompanhar pedidos, chamar no painel, atender garçom",
     "garcom": "Página do garçom: pedidos na mesa pelo celular/tablet e alertas do QR code",
-    "cozinha": "Tela da cozinha (iniciar preparo / pronto)",
+    "cozinha": "Telas de preparo: cozinha e bar (iniciar preparo / pronto)",
     "receber": "Receber pagamentos",
     "caixa": "Abrir e fechar o caixa, sangria e suprimento",
     "cancelar": "Cancelar pedidos (com motivo)",
@@ -331,6 +335,9 @@ COLUNAS_NOVAS = {
         "cancelado_por_nome": "TEXT NOT NULL DEFAULT ''",
         "comanda_id": "INTEGER",
         "motivo_cancelamento": "TEXT NOT NULL DEFAULT ''",
+        # Preparo em cada tela (cozinha e bar): "" = não passa por ela.
+        "status_cozinha": "TEXT NOT NULL DEFAULT ''",
+        "status_bar": "TEXT NOT NULL DEFAULT ''",
     },
 }
 
@@ -342,6 +349,8 @@ class ErroNegocio(Exception):
 # Onde cada produto sai: na cozinha (tela e impressora da cozinha), no bar
 # (impressora do bar) ou em nenhum lugar (já pronto: sai direto do caixa).
 DESTINOS = {"cozinha": "Cozinha", "bar": "Bar", "nenhum": "Não imprime (já pronto)"}
+# Setores que podem ter tela de preparo (cada um com o seu "pronto").
+SETORES_TELA = ("cozinha", "bar")
 
 
 def setor_do_item(item: dict) -> str:
@@ -478,6 +487,11 @@ class Banco:
             for nome, tipo in colunas.items():
                 if nome not in existentes:
                     self.conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}")
+                    if nome == "status_cozinha":
+                        # pedidos na fila de antes desta versão continuam na tela da cozinha
+                        self.conn.execute(
+                            "UPDATE pedidos SET status_cozinha = status WHERE status IN ('novo', 'preparando') "
+                            "AND EXISTS (SELECT 1 FROM pedido_itens i WHERE i.pedido_id = pedidos.id AND i.vai_cozinha = 1)")
         linha = self.conn.execute("SELECT valor FROM config WHERE chave = 'versao_permissoes'").fetchone()
         versao = json.loads(linha["valor"]) if linha else 1
         for alvo, novas in sorted(PERMISSOES_NOVAS.items()):
@@ -944,8 +958,11 @@ class Banco:
             total += produto["preco_centavos"] * quantidade
 
         # Sem nada para preparar (só bebidas, chips...), o pedido já nasce
-        # "pronto": não passa pela cozinha nem pela impressora dela.
+        # "pronto": não passa pela cozinha nem pela impressora dela. O bar só
+        # segura o pedido quando tem tela (senão ele só imprime).
         precisa_cozinha = any(p["vai_cozinha"] for p, _, _ in linhas_itens)
+        precisa_bar = self.config()["tela_bar"] and any(p["destino"] == "bar" for p, _, _ in linhas_itens)
+        aguarda = precisa_cozinha or precisa_bar
         with self._transacao():
             agora = self.agora()
             dia = self._dia()
@@ -953,11 +970,13 @@ class Banco:
             numero = (linha["n"] or 0) + 1
             cur = self.conn.execute(
                 "INSERT INTO pedidos (tipo, dia, numero, codigo, origem, mesa, cliente, observacao, status, "
-                "total_centavos, criado_em, atualizado_em, pronto_em, usuario_id, usuario_nome, comanda_id) "
-                "VALUES ('pedido', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "total_centavos, criado_em, atualizado_em, pronto_em, usuario_id, usuario_nome, comanda_id, "
+                "status_cozinha, status_bar) "
+                "VALUES ('pedido', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (dia, numero, str(numero), origem, _texto(mesa, 40), _texto(cliente, 60), _texto(observacao, 300),
-                 "novo" if precisa_cozinha else "pronto", total, agora, agora, None if precisa_cozinha else agora,
-                 (por or {}).get("id"), (por or {}).get("nome") or "", comanda["id"] if comanda else None),
+                 "novo" if aguarda else "pronto", total, agora, agora, None if aguarda else agora,
+                 (por or {}).get("id"), (por or {}).get("nome") or "", comanda["id"] if comanda else None,
+                 "novo" if precisa_cozinha else "", "novo" if precisa_bar else ""),
             )
             pedido_id = cur.lastrowid
             for produto, quantidade, obs in linhas_itens:
@@ -969,7 +988,7 @@ class Banco:
                 )
             resumo = ", ".join(f"{q}x {p['nome']}" for p, q, _ in linhas_itens)
             onde = (f" — comanda {comanda['numero']}" if comanda else "") + (f" — mesa {mesa}" if mesa else "")
-            sem_cozinha = "" if precisa_cozinha else " — sem preparo, já pronto"
+            sem_cozinha = "" if aguarda else " — sem preparo, já pronto"
             self._registrar(por, "Lançou pedido", f"Nº {numero}{onde}: {resumo} ({moeda(total)}){sem_cozinha}", pedido_id)
         return self.obter_pedido(pedido_id)
 
@@ -994,6 +1013,8 @@ class Banco:
             pedido["vai_cozinha"] = any(i["vai_cozinha"] for i in pedido["itens"])
             # Ambientes que recebem este pedido (cada um na sua impressora).
             pedido["setores"] = [s for s in ("cozinha", "bar") if any(i["setor"] == s for i in pedido["itens"])]
+            # Situação em cada tela de preparo (só as que o pedido usa).
+            pedido["preparo"] = {s: pedido[f"status_{s}"] for s in SETORES_TELA if pedido[f"status_{s}"]}
             return pedido
 
     def _exigir_pedido(self, pedido_id: int) -> dict:
@@ -1005,13 +1026,34 @@ class Banco:
     NOMES_STATUS = {"preparando": "Iniciou preparo", "pronto": "Marcou pronto", "entregue": "Marcou entregue",
                     "novo": "Voltou para a fila"}
 
-    def mudar_status(self, pedido_id: int, status: str, por: Optional[dict] = None, motivo: str = "") -> dict:
+    def mudar_status(self, pedido_id: int, status: str, por: Optional[dict] = None, motivo: str = "",
+                     setor: Optional[str] = None) -> dict:
+        """Com `setor` ("cozinha"/"bar"), muda só o preparo daquela tela: o
+        pedido fica pronto quando todas as telas que ele usa marcarem pronto."""
         if status not in STATUS_PEDIDO or status == "chamado":
             raise ErroNegocio("Status inválido.")
         pedido = self._exigir_pedido(pedido_id)
         if pedido["status"] in ("entregue", "cancelado") and status != pedido["status"]:
             raise ErroNegocio("Esse pedido já foi finalizado.")
-        if status == "cancelado":
+        if setor:
+            if setor not in SETORES_TELA or status not in ("novo", "preparando", "pronto"):
+                raise ErroNegocio("Status inválido.")
+            if setor not in pedido["preparo"]:
+                raise ErroNegocio("Esse pedido não tem nada para preparar aqui.")
+            if pedido["status"] not in ("novo", "preparando", "pronto"):
+                raise ErroNegocio("Esse pedido já foi chamado no painel.")
+            preparo = {**pedido["preparo"], setor: status}
+            if all(s == "pronto" for s in preparo.values()):
+                geral = "pronto"
+            elif any(s in ("preparando", "pronto") for s in preparo.values()):
+                geral = "preparando"
+            else:
+                geral = "novo"
+        else:
+            geral = status
+            # sem setor (ex.: o caixa marcou pronto): vale para todas as telas
+            preparo = {s: status for s in pedido["preparo"]} if status in ("novo", "preparando", "pronto") else {}
+        if geral == "cancelado":
             if pedido["pago"]:
                 raise ErroNegocio("Esse pedido já foi pago. Estorne o pagamento antes de cancelar.")
             motivo = _texto(motivo, 200)
@@ -1019,19 +1061,22 @@ class Banco:
                 raise ErroNegocio("Informe o motivo do cancelamento.")
         with self._transacao():
             agora = self.agora()
-            campos = {"status": status, "atualizado_em": agora}
-            if status == "pronto":
+            campos = {"status": geral, "atualizado_em": agora}
+            for s, v in preparo.items():
+                campos[f"status_{s}"] = v
+            if geral == "pronto":
                 campos["pronto_em"] = agora
-            if status == "cancelado":
+            if geral == "cancelado":
                 campos["cancelado_por_nome"] = (por or {}).get("nome") or "Sistema"
                 campos["motivo_cancelamento"] = motivo
             sets = ", ".join(f"{k} = ?" for k in campos)
             self.conn.execute(f"UPDATE pedidos SET {sets} WHERE id = ?", (*campos.values(), pedido_id))
-            if status == "cancelado":
+            onde = f" ({DESTINOS[setor].lower()})" if setor else ""
+            if geral == "cancelado":
                 self._registrar(por, "Cancelou pedido", f"Nº {pedido['codigo']} ({moeda(pedido['total_centavos'])}) — motivo: {motivo}", pedido_id)
             else:
-                self._registrar(por, self.NOMES_STATUS.get(status, status), f"Pedido nº {pedido['codigo']}", pedido_id)
-        if status == "pronto" and self.config()["chamar_ao_ficar_pronto"]:
+                self._registrar(por, self.NOMES_STATUS.get(status, status) + onde, f"Pedido nº {pedido['codigo']}", pedido_id)
+        if geral == "pronto" and pedido["status"] != "pronto" and self.config()["chamar_ao_ficar_pronto"]:
             return self.chamar(pedido_id, por=None)
         return self.obter_pedido(pedido_id)
 

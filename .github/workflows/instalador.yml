@@ -156,6 +156,9 @@ jobs:
       - name: Testar o executável empacotado
         run: .\build_tools\testar_exe.ps1 -Exe "dist\TorresComandas\TorresComandas.exe" -Porta 8099
 
+      - name: Testar a janela do programa (principal, terminal e abas)
+        run: .\build_tools\testar_janela.ps1 -Exe "dist\TorresComandas\TorresComandas.exe"
+
       - name: Testar o instalador (instala, roda e desinstala)
         run: |
           $setup = Get-ChildItem installer\Output\TorresComandas-Setup-*.exe | Select-Object -First 1

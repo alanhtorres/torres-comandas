@@ -5,6 +5,7 @@
   <title>Entrar — {{ loja }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <script>/* login aberto dentro de uma aba do programa: entra na janela inteira */if(window.top!==window){try{top.location.href=location.href}catch(e){}}</script>
   <script>/* tema escolhido neste aparelho (botão ☀️/🌙) vale mais que o padrão */try{var t=localStorage.getItem("tema");if(t==="claro"||t==="escuro")document.documentElement.dataset.tema=t}catch(e){}</script>
   <style>
     main { max-width: 360px; margin: 10vh auto; padding: 0 16px; }

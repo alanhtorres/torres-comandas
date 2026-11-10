@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-tema="{{ tema }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ loja }} — Torres Comandas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='comum.css') }}">
+  <script>/* tema escolhido neste aparelho (botão ☀️/🌙) vale mais que o padrão */try{var t=localStorage.getItem("tema");if(t==="claro"||t==="escuro")document.documentElement.dataset.tema=t}catch(e){}</script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='area.css') }}">
+</head>
+<body>
+  <header class="barra-abas">
+    <strong class="marca">{{ loja }}</strong>
+    <nav id="abas" role="tablist">
+      {% for a in abas %}
+      <button role="tab" data-aba="{{ a.chave }}" data-url="{{ a.url }}" title="{{ a.nome }}"><span class="icone">{{ a.icone }}</span><span class="nome">{{ a.nome }}</span></button>
+      {% endfor %}
+    </nav>
+    <span class="espaco"></span>
+    <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
+    <button id="esta-maquina" class="discreto" hidden>🖥️ Esta máquina</button>
+    <button id="trocar-senha" class="discreto">🔑 Senha</button>
+    <a href="/sair" class="discreto" id="sair">Sair</a>
+  </header>
+  <main id="telas" data-inicial="{{ inicial }}"></main>
+  <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script src="{{ url_for('static', filename='area.js') }}"></script>
+</body>
+</html>

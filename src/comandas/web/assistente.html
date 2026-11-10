@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Torres Comandas</title>
+  <style>
+    :root { --fundo: #0f172a; --painel: #1e293b; --painel-2: #273449; --borda: #334155; --texto: #e2e8f0;
+      --texto-2: #94a3b8; --destaque: #38bdf8; --verde: #22c55e; --amarelo: #f59e0b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--fundo); color: var(--texto); }
+    main { max-width: 760px; margin: 0 auto; padding: 36px 24px; }
+    h1 { margin: 0 0 4px; font-size: 1.8rem; }
+    .sub { color: var(--texto-2); margin: 0 0 28px; }
+    .opcoes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .opcao { text-align: left; background: var(--painel); border: 2px solid var(--borda); border-radius: 14px; padding: 20px;
+      color: var(--texto); cursor: pointer; font: inherit; }
+    .opcao:hover { border-color: var(--destaque); }
+    .opcao .icone { font-size: 2.2rem; }
+    .opcao h2 { margin: 8px 0 6px; font-size: 1.2rem; }
+    .opcao p { margin: 0; color: var(--texto-2); font-size: .95rem; line-height: 1.4; }
+    .cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: 14px; padding: 20px; margin-top: 18px; }
+    button.acao { background: var(--destaque); color: #0f172a; border: none; border-radius: 10px; padding: 12px 18px;
+      font: inherit; font-weight: 700; cursor: pointer; }
+    button.secundario { background: var(--painel-2); color: var(--texto); }
+    button.sistema { display: block; width: 100%; text-align: left; margin-top: 10px; background: var(--painel-2);
+      color: var(--texto); border: 2px solid var(--borda); border-radius: 12px; padding: 14px 16px; font: inherit; cursor: pointer; }
+    button.sistema:hover { border-color: var(--verde); }
+    button.sistema small { display: block; color: var(--texto-2); }
+    input { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--borda); background: var(--fundo);
+      color: var(--texto); font: inherit; margin: 6px 0 10px; }
+    .status { color: var(--texto-2); min-height: 1.4em; }
+    .erro { color: #fecaca; background: #450a0a; border-radius: 10px; padding: 10px 12px; }
+    .linha { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    [hidden] { display: none !important; }
+    @media (max-width: 640px) { .opcoes { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>🧾 Torres Comandas</h1>
+    <p class="sub" id="subtitulo">Como este computador vai ser usado na loja?</p>
+
+    <div id="passo-papel">
+      <div class="opcoes">
+        <button class="opcao" id="ser-principal">
+          <div class="icone">💾</div>
+          <h2>Este é o computador principal</h2>
+          <p>Os dados da loja (pedidos, caixa, clientes) ficam guardados nele e as outras máquinas se conectam nele.
+            Normalmente é o computador do caixa. Precisa ficar ligado enquanto a loja funciona.</p>
+        </button>
+        <button class="opcao" id="ser-terminal">
+          <div class="icone">🔌</div>
+          <h2>Conectar ao computador principal</h2>
+          <p>Para as outras máquinas: cozinha, bar, segundo caixa, TV do painel. O programa acha o computador principal
+            sozinho na rede da loja.</p>
+        </button>
+      </div>
+    </div>
+
+    <div id="passo-conectar" hidden>
+      <div class="cartao">
+        <p class="erro" id="aviso" hidden></p>
+        <div class="linha"><strong id="titulo-busca">Procurando o computador principal na rede...</strong></div>
+        <p class="status" id="status"></p>
+        <div id="achados"></div>
+        <div class="linha" style="margin-top: 14px">
+          <button class="acao secundario" id="procurar-de-novo">🔍 Procurar de novo</button>
+          <button class="acao secundario" id="voltar">← Voltar</button>
+        </div>
+      </div>
+      <div class="cartao">
+        <strong>Não achou?</strong>
+        <p class="status">Confira se o computador principal está ligado, com o Torres Comandas aberto, e na mesma rede (mesmo
+          roteador/Wi-Fi). Ou digite o endereço que aparece no computador principal (ícone do Torres Comandas perto do relógio):</p>
+        <input id="endereco" placeholder="Ex.: 192.168.0.10">
+        <button class="acao" id="conectar-endereco">Conectar</button>
+      </div>
+    </div>
+  </main>
+  <script>
+    (function () {
+      "use strict";
+      // Preenchido pelo programa: {"modo": "escolher" | "reconectar", "mensagem": "..."}
+      const ESTADO = /*ESTADO*/{"modo": "escolher", "mensagem": ""}/*FIM*/;
+      const $ = (id) => document.getElementById(id);
+      let api = null;
+
+      function pronto(fazer) {
+        if (window.pywebview && window.pywebview.api) fazer();
+        else window.addEventListener("pywebviewready", fazer);
+      }
+
+      function mostrarConectar() {
+        $("passo-papel").hidden = true;
+        $("passo-conectar").hidden = false;
+        $("subtitulo").textContent = "Conectar este computador ao computador principal da loja";
+        procurar();
+      }
+
+      function botaoSistema(s) {
+        const b = document.createElement("button");
+        b.className = "sistema";
+        b.innerHTML = "<strong></strong><small></small>";
+        b.querySelector("strong").textContent = "🏪 " + (s.loja || "Torres Comandas");
+        b.querySelector("small").textContent = s.url.replace("http://", "") + " — tocar para conectar";
+        b.addEventListener("click", () => conectar(s.url));
+        return b;
+      }
+
+      async function procurar() {
+        $("titulo-busca").textContent = "Procurando o computador principal na rede...";
+        $("status").textContent = "Isso leva poucos segundos.";
+        $("achados").replaceChildren();
+        const lista = await api.procurar();
+        $("achados").replaceChildren(...lista.map(botaoSistema));
+        if (!lista.length) {
+          $("titulo-busca").textContent = "Nenhum computador principal encontrado.";
+          $("status").textContent = "";
+        } else {
+          $("titulo-busca").textContent = lista.length === 1 ? "Computador principal encontrado:" : "Escolha o da sua loja:";
+          $("status").textContent = "";
+        }
+        return lista;
+      }
+
+      async function conectar(url) {
+        $("status").textContent = "Conectando...";
+        const r = await api.conectar(url);
+        if (!r.ok) {
+          $("aviso").hidden = false;
+          $("aviso").textContent = r.erro;
+          $("status").textContent = "";
+        }
+      }
+
+      pronto(async () => {
+        api = window.pywebview.api;
+        $("ser-terminal").addEventListener("click", mostrarConectar);
+        $("voltar").addEventListener("click", () => {
+          $("passo-conectar").hidden = true;
+          $("passo-papel").hidden = false;
+          $("subtitulo").textContent = "Como este computador vai ser usado na loja?";
+        });
+        $("procurar-de-novo").addEventListener("click", procurar);
+        $("conectar-endereco").addEventListener("click", () => conectar($("endereco").value));
+        $("endereco").addEventListener("keydown", (e) => { if (e.key === "Enter") conectar($("endereco").value); });
+        $("ser-principal").addEventListener("click", async () => {
+          $("ser-principal").disabled = true;
+          const existentes = await api.procurar_rapido();
+          if (existentes.length && !confirm("Já existe um computador principal nesta rede (" + existentes.map((s) => s.loja).join(", ")
+            + ").\n\nSó deve haver UM por loja. Usar este mesmo assim? (Se for outra loja na mesma rede, pode continuar.)")) {
+            $("ser-principal").disabled = false;
+            return;
+          }
+          await api.ser_principal();
+        });
+
+        if (ESTADO.modo === "reconectar") {
+          // Terminal que não achou o principal: tenta de novo sozinho.
+          mostrarConectar();
+          $("aviso").hidden = false;
+          $("aviso").textContent = ESTADO.mensagem;
+          // o mesmo sistema de antes (mesmo que o IP do principal tenha mudado)
+          setInterval(() => api.reconectar(), 10000);
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

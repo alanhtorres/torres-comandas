@@ -164,7 +164,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
                     if api:
                         return jsonify({"ok": False, "erro": MOTIVOS_SAIDA.get(motivo, "Faça login para continuar."),
                                         "motivo": motivo}), 401
-                    return redirect(url_for("login", proximo=request.path, motivo=motivo))
+                    # volta para a mesma tela, com a parte "?tela=..." (aba que a máquina abre)
+                    return redirect(url_for("login", proximo=request.full_path.rstrip("?"), motivo=motivo))
                 if permissoes and not pode(*permissoes):
                     if api:
                         return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
@@ -272,6 +273,33 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def inicio():
         return render_template("inicio.html", url_base=url_base(), permissoes_admin=PERMISSOES_ADMIN)
 
+    def abas_do_usuario():
+        """Telas que este usuário pode abrir, na ordem das abas do programa."""
+        cfg = banco.config()
+        abas = []
+        if pode("pedidos", "receber", "caixa"):
+            abas.append(("caixa", "🧾", "Caixa"))
+        if pode("comandas") and cfg["modo_comandas_ativo"]:
+            abas.append(("comandas", "🎟️", "Comandas"))
+        if pode("garcom"):
+            abas.append(("garcom", "🛎️", "Garçom"))
+        if pode("cozinha"):
+            abas.append(("cozinha", "👨‍🍳", "Cozinha"))
+            if cfg["tela_bar"]:
+                abas.append(("bar", "🍹", "Bar"))
+        abas.append(("painel", "📺", "Painel (TV)"))
+        if pode(*PERMISSOES_ADMIN):
+            abas.append(("admin", "⚙️", "Administração"))
+        return [{"chave": c, "icone": i, "nome": n, "url": "/" + c} for c, i, n in abas]
+
+    @app.get("/area")
+    @exigir()
+    def area():
+        """O programa: todas as telas em abas, numa janela só (sem endereços)."""
+        abas = abas_do_usuario()
+        pedida = request.args.get("tela", "")
+        return render_template("area.html", abas=abas, inicial=pedida if any(a["chave"] == pedida for a in abas) else "")
+
     @app.get("/caixa")
     @exigir("pedidos", "receber", "caixa")
     def tela_caixa():
@@ -280,7 +308,13 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @app.get("/cozinha")
     @exigir("cozinha")
     def tela_cozinha():
-        return render_template("cozinha.html")
+        return render_template("cozinha.html", setor="cozinha")
+
+    @app.get("/bar")
+    @exigir("cozinha")
+    def tela_bar():
+        """Tela de preparo do bar: igual à da cozinha, com os produtos do bar."""
+        return render_template("cozinha.html", setor="bar")
 
     @app.get("/garcom")
     @exigir("garcom")
@@ -497,7 +531,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         necessario = {"cancelado": ("cancelar",), "entregue": ("pedidos", "garcom")}.get(status, ("cozinha", "pedidos"))
         if not pode(*necessario):
             return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
-        return jsonify({"ok": True, "pedido": banco.mudar_status(pedido_id, status, por=ator(), motivo=dados.get("motivo", ""))})
+        return jsonify({"ok": True, "pedido": banco.mudar_status(pedido_id, status, por=ator(), motivo=dados.get("motivo", ""),
+                                                                setor=dados.get("setor") or None)})
 
     @app.post("/api/pedidos/<int:pedido_id>/chamar")
     @exigir("pedidos")

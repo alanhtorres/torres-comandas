@@ -1,0 +1,29 @@
+/* O programa: barra de abas em cima e cada tela ocupando o resto da janela. */
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+
+.barra-abas { display: flex; align-items: center; gap: 8px; padding: 6px 10px 0; background: var(--painel);
+  border-bottom: 1px solid var(--borda); flex: none; }
+.barra-abas .marca { margin: 0 10px 6px 4px; white-space: nowrap; }
+.barra-abas .espaco { flex: 1; }
+.barra-abas .usuario-chip, .barra-abas .discreto { margin-bottom: 6px; }
+
+#abas { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+#abas::-webkit-scrollbar { display: none; }
+#abas button { display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 10px 10px 0 0;
+  background: transparent; color: var(--texto-2); border: 1px solid transparent; border-bottom: none; font-weight: 600;
+  white-space: nowrap; }
+#abas button:hover { color: var(--texto); background: var(--painel-2); }
+#abas button.ativa { background: var(--fundo); color: var(--texto); border-color: var(--borda); position: relative; top: 1px; }
+#abas .icone { font-size: 1.15rem; }
+
+.discreto { background: transparent; color: var(--texto-2); border: none; padding: 6px 8px; text-decoration: none;
+  font-size: .9rem; cursor: pointer; }
+.discreto:hover { color: var(--texto); }
+
+#telas { flex: 1; position: relative; }
+#telas iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--fundo); }
+
+/* janela estreita: só os ícones nas abas */
+@media (max-width: 1100px) { .barra-abas .marca { display: none; } }
+@media (max-width: 900px) { #abas .nome { display: none; } #abas button { padding: 10px 14px; } }

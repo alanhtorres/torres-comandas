@@ -5,11 +5,40 @@ pedidos no caixa e pelo QR code da mesa, cozinha (tela e/ou impressora), painel 
 chamada na TV, controle de caixa com relatórios financeiros, usuários com
 permissões e histórico de tudo o que cada um faz.
 
-Um PC da loja roda o servidor; todas as telas (caixa, cozinha, TV do painel,
-celular do cliente) são apenas um navegador apontando para ele na rede local.
+É um **programa de Windows**: instala-se o mesmo programa em cada computador da loja
+(caixa, cozinha, bar, TV do painel). Um deles é o **computador principal** (guarda os
+dados); os outros se conectam nele sozinhos pela rede da loja — ninguém digita
+endereço. Cada computador mostra as telas em **abas** numa janela própria.
 **Não precisa de internet** (ver "Funcionamento sem internet").
 
+## Instalando nos computadores da loja
+
+1. Baixe o **`TorresComandas-Setup-x.y.z.exe`** na página **Releases** do GitHub e
+   instale em cada computador da loja (Avançar → Avançar → Concluir).
+2. **No computador principal** (normalmente o do caixa), na primeira vez escolha
+   **"Este é o computador principal"** e crie o administrador. Ele precisa ficar ligado
+   enquanto a loja funciona; fechar a janela não desliga o sistema (fica o ícone
+   laranja perto do relógio — "Sair" nesse ícone desliga para todos).
+3. **Nos outros computadores** (cozinha, bar, segundo caixa, TV), escolha
+   **"Conectar ao computador principal"**: o programa procura na rede e mostra o
+   principal encontrado; é só clicar. Se o IP do principal mudar, eles o reencontram
+   sozinhos.
+4. Em cada computador, **🖥️ Esta máquina** (no topo) escolhe a tela que ele abre ao
+   ligar (ex.: a TV abre o Painel, a cozinha abre a Cozinha) e se abre em tela cheia.
+   Na TV do painel, **F2** volta para as abas; **F11** liga/desliga a tela cheia.
+
+As abas aparecem conforme as permissões de quem entrou (o cozinheiro só vê Cozinha,
+Bar e Painel). **Ctrl+1, Ctrl+2...** trocam de aba; trocar de aba não perde o que
+estava sendo feito na outra.
+
+A janela usa o **WebView2** (o motor do Edge), que já vem no Windows 10/11 atualizado;
+se faltar, o instalador o instala (precisa de internet só nesse momento). Celulares
+(garçom e cliente do QR code) continuam pelo app/navegador, como antes.
+
 ## Telas
+
+No programa, essas telas aparecem como abas; os endereços servem para celulares,
+tablets e navegadores.
 
 | Tela | Endereço | Quem acessa |
 |---|---|---|
@@ -18,6 +47,7 @@ celular do cliente) são apenas um navegador apontando para ele na rede local.
 | Comandas | `/comandas` | Entrada/recepção: cadastrar o cliente, abrir e fechar comandas, aniversariantes do dia |
 | Garçom | `/garcom` | Celular/tablet: pedidos na mesa, alerta quando o cliente chama pelo QR code, pedidos prontos para entregar, contas das mesas |
 | Cozinha | `/cozinha` | Só o que precisa de preparo, com tempo de espera (amarelo > 10 min, vermelho > 20 min) |
+| Bar | `/bar` | Igual à cozinha, com os produtos do bar (quando a tela do bar está ligada) |
 | Painel (TV) | `/painel` | Público. Pedidos prontos + histórico na lateral; fotos e vídeos dos produtos no resto da tela |
 | Cliente (QR code) | `/m/<código-da-mesa>` | Público. Cardápio no celular, pedido direto para a cozinha, chamar garçom, pedir a conta |
 | Administração | `/admin` | Relatórios, cardápio, mesas e QR codes, mídias do painel, usuários e permissões, histórico, configurações |
@@ -154,7 +184,7 @@ só aparece para quem tem a permissão "Clientes e WhatsApp". A pedido do client
 botão "Apagar dados (LGPD)" apaga nome, telefone, CPF e nascimento — as vendas
 continuam nos relatórios, sem os dados pessoais.
 
-## Cozinha, bar ou já pronto (qual impressora)
+## Cozinha, bar ou já pronto (tela ou impressora)
 
 Cada produto tem a opção **"Sai na impressora"**:
 - **Cozinha**: precisa de preparo — aparece na tela da cozinha e sai na impressora dela.
@@ -170,6 +200,11 @@ Produto novo numa categoria que já existe vem com a impressora dela.
 Pedido misto é dividido: o cupom da cozinha só tem os lanches, o do bar só as
 bebidas. Pedido sem nada para a cozinha (só bar ou só itens prontos) já nasce
 "pronto"; a tela da cozinha mostra só o que ela precisa preparar.
+
+**Tela do bar** (Configurações → "Usar a tela do bar"): o bar ganha uma tela igual à
+da cozinha, no lugar da impressora ou junto com ela. Cozinha e bar marcam "pronto"
+cada um na sua parte, e o pedido só fica pronto (e vai para o painel) quando os dois
+terminarem. Sem a tela do bar, os itens do bar só imprimem e não seguram o pedido.
 
 ## Histórico (auditoria)
 
@@ -267,16 +302,14 @@ Os vídeos do painel sempre tocam sem som.
 
 ## Instalando no Windows
 
-1. Baixe o **`TorresComandas-Setup-x.y.z.exe`** na página **Releases** do GitHub.
-2. Dê dois cliques e siga o assistente (Avançar → Avançar → Concluir). Não precisa
-   instalar Python nem nada mais: vem tudo dentro.
-3. Na primeira vez a tela inicial abre sozinha no navegador pedindo para criar o
-   administrador. Depois o programa fica em segundo plano, com um **ícone laranja
-   perto do relógio do Windows** (abrir as telas, ver o endereço na rede, abrir a
-   pasta de dados/backups).
+Ver "Instalando nos computadores da loja" no começo. Não precisa instalar Python
+nem nada mais: vem tudo dentro.
 
-O instalador libera o programa no Firewall do Windows e, por padrão, faz ele
-**iniciar junto com o Windows**. Para atualizar, rode o instalador da versão nova
+O instalador libera o programa no Firewall do Windows (inclusive a busca entre as
+máquinas, porta UDP 8091) e, por padrão, faz ele **abrir junto com o Windows**.
+**Atualizando da 2.x:** o computador que já tinha os dados continua sendo o principal,
+sem perguntar nada; nos outros, instale e escolha "Conectar ao computador principal".
+Navegadores e celulares continuam funcionando pelos endereços de antes. Para atualizar, rode o instalador da versão nova
 por cima: os dados são preservados (ficam em `%LOCALAPPDATA%\TorresComandas`).
 
 **Atualizando da versão 1.x:** pedidos, cardápio e mesas continuam lá. O antigo PIN
@@ -328,13 +361,17 @@ impressora e conferem os bytes ESC/POS recebidos.
 ```
 main.py                     ponto de entrada
 src/comandas/
-  app.py                    inicialização, IP da rede, backup diário, instância única
-  bandeja.py                ícone na bandeja do Windows
+  app.py                    inicialização (principal ou terminal), backup diário
+  programa.py               janela do programa (pywebview/WebView2), primeira vez, abas
+  maquina.py                papel deste computador e tela que ele abre (maquina.json)
+  descoberta.py             as máquinas se acham na rede (UDP 8091 + varredura)
+  bandeja.py                ícone do computador principal perto do relógio
   banco.py                  SQLite + regras: usuários/permissões, auditoria, pedidos, caixa, relatórios
   servidor.py               rotas Flask (telas + API) com checagem de permissão
   impressora.py             cupons ESC/POS (cozinha, conta, fechamento) e envio TCP
   exportar.py               relatório para download em PDF (reportlab) ou Excel (openpyxl)
-  web/templates, web/static telas (HTML/CSS/JS puro, sem build)
+  web/templates, web/static telas (HTML/CSS/JS puro, sem build); area.html = as abas
+  web/assistente.html       tela de primeira vez (principal ou conectar)
   app_android/              o .apk do garçom entra aqui no build (para a página /app)
 android/                    app Android do garçom (Kotlin, sem bibliotecas externas)
 tests/

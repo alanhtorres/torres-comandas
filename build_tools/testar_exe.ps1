@@ -23,7 +23,7 @@ try {
     $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     Invoke-WebRequest "$base/primeiro-acesso" -Method Post -WebSession $s -UseBasicParsing `
         -Body @{ nome = "Teste"; usuario = "teste"; senha = "teste123"; confirmar = "teste123" } | Out-Null
-    foreach ($tela in "/", "/caixa", "/cozinha", "/garcom", "/comandas", "/painel", "/admin", "/static/comum.js", "/static/painel.css") {
+    foreach ($tela in "/", "/area", "/caixa", "/cozinha", "/bar", "/garcom", "/comandas", "/painel", "/admin", "/static/comum.js", "/static/painel.css") {
         $r = Invoke-WebRequest "$base$tela" -WebSession $s -UseBasicParsing
         if ($r.StatusCode -ne 200) { throw "$tela respondeu $($r.StatusCode)" }
         if ($tela -eq "/caixa" -and $r.Content -notmatch "Novo pedido") { throw "/caixa não abriu logado" }

@@ -654,3 +654,74 @@ def test_permissoes_novas_para_admin_antigo(tmp_path):
                            (json.dumps(["usuarios", "garcom", "estornar"]),))
         banco.conn.commit()
     assert {"comandas", "clientes"} <= set(Banco(caminho).listar_usuarios()[0]["permissoes"])
+
+
+# --- Tela do bar ---------------------------------------------------------------
+
+def _produtos_bar(banco):
+    lanche = banco.criar_produto({"nome": "X-Burger", "preco_centavos": 2500, "destino": "cozinha"})
+    chope = banco.criar_produto({"nome": "Chope", "preco_centavos": 1200, "destino": "bar"})
+    lata = banco.criar_produto({"nome": "Refri lata", "preco_centavos": 600, "destino": "nenhum"})
+    return lanche, chope, lata
+
+
+def test_bar_sem_tela_so_imprime_e_nao_segura_o_pedido(banco):
+    lanche, chope, _ = _produtos_bar(banco)
+    p = banco.criar_pedido([{"produto_id": chope["id"]}])
+    assert p["status"] == "pronto" and p["preparo"] == {} and p["setores"] == ["bar"]
+    p = banco.criar_pedido([{"produto_id": chope["id"]}, {"produto_id": lanche["id"]}])
+    assert p["status"] == "novo" and p["preparo"] == {"cozinha": "novo"}
+
+
+def test_tela_do_bar_e_cozinha_cada_uma_com_seu_pronto(banco, ana):
+    banco.salvar_config({"tela_bar": True})
+    lanche, chope, lata = _produtos_bar(banco)
+    so_bar = banco.criar_pedido([{"produto_id": chope["id"]}, {"produto_id": lata["id"]}])
+    assert so_bar["status"] == "novo" and so_bar["preparo"] == {"bar": "novo"}
+    assert banco.mudar_status(so_bar["id"], "pronto", por=ana, setor="bar")["status"] == "pronto"
+
+    p = banco.criar_pedido([{"produto_id": chope["id"]}, {"produto_id": lanche["id"]}])
+    assert p["preparo"] == {"cozinha": "novo", "bar": "novo"}
+    p = banco.mudar_status(p["id"], "preparando", por=ana, setor="cozinha")
+    assert p["status"] == "preparando" and p["preparo"] == {"cozinha": "preparando", "bar": "novo"}
+    p = banco.mudar_status(p["id"], "pronto", por=ana, setor="bar")
+    assert p["status"] == "preparando"  # a cozinha ainda não terminou
+    p = banco.mudar_status(p["id"], "pronto", por=ana, setor="cozinha")
+    assert p["status"] == "pronto" and p["pronto_em"]
+    # pronto por engano no bar: volta para a fila só do bar
+    p = banco.mudar_status(p["id"], "preparando", por=ana, setor="bar")
+    assert p["status"] == "preparando" and p["preparo"] == {"cozinha": "pronto", "bar": "preparando"}
+    with pytest.raises(ErroNegocio):
+        banco.mudar_status(so_bar["id"], "pronto", setor="cozinha")  # não tem nada da cozinha
+    # o caixa marcando pronto vale para as duas telas
+    p = banco.mudar_status(p["id"], "pronto", por=ana)
+    assert p["preparo"] == {"cozinha": "pronto", "bar": "pronto"}
+    banco.chamar(p["id"])
+    with pytest.raises(ErroNegocio):
+        banco.mudar_status(p["id"], "preparando", setor="bar")
+    acoes = [r["acao"] for r in banco.listar_auditoria(*([banco._dia()] * 2))]
+    assert "Marcou pronto (bar)" in acoes and "Iniciou preparo (cozinha)" in acoes
+
+
+def test_chamar_ao_ficar_pronto_so_quando_todas_as_telas_terminam(banco, ana):
+    banco.salvar_config({"tela_bar": True, "chamar_ao_ficar_pronto": True})
+    lanche, chope, _ = _produtos_bar(banco)
+    p = banco.criar_pedido([{"produto_id": chope["id"]}, {"produto_id": lanche["id"]}])
+    assert banco.mudar_status(p["id"], "pronto", setor="cozinha")["status"] == "preparando"
+    assert banco.mudar_status(p["id"], "pronto", setor="bar")["status"] == "chamado"
+
+
+def test_pedidos_na_fila_antes_da_atualizacao_continuam_na_cozinha(tmp_path):
+    import sqlite3
+    banco = Banco(tmp_path / "t.db")
+    lanche, _, _ = _produtos_bar(banco)
+    p = banco.criar_pedido([{"produto_id": lanche["id"]}])
+    banco.conn.close()
+    # simula o banco da versão anterior (sem as colunas de preparo por tela)
+    con = sqlite3.connect(tmp_path / "t.db")
+    for coluna in ("status_cozinha", "status_bar"):
+        con.execute(f"ALTER TABLE pedidos DROP COLUMN {coluna}")
+    con.commit()
+    con.close()
+    banco = Banco(tmp_path / "t.db")
+    assert banco.obter_pedido(p["id"])["preparo"] == {"cozinha": "novo"}

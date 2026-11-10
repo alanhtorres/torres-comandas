@@ -3,7 +3,6 @@ rodando em segundo plano e o menu dá acesso rápido às telas."""
 import os
 import subprocess
 import sys
-import webbrowser
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -30,26 +29,19 @@ def _abrir_pasta(pasta: Path) -> None:
         subprocess.Popen(["xdg-open", str(pasta)])
 
 
-def criar_bandeja(url_local: str, url_rede: str, pasta_dados: Path, ao_sair):
+def criar_bandeja(ip_rede: str, porta: str, pasta_dados: Path, mostrar, sair):
+    """Ícone do computador principal: o sistema fica no ar para as outras
+    máquinas mesmo com a janela fechada."""
     # Importado só aqui: em sistemas sem bandeja o pystray falha já no import,
     # e o desenho do ícone (usado no build) não depende dele.
     import pystray
 
-    def abrir(caminho):
-        return lambda icon=None, item=None: webbrowser.open(url_local + caminho)
-
-    def sair(icon, item):
-        ao_sair()
-        icon.stop()
-
     menu = pystray.Menu(
-        pystray.MenuItem("Abrir tela inicial (links de todas as telas)", abrir("/"), default=True),
-        pystray.MenuItem("Abrir caixa", abrir("/caixa")),
-        pystray.MenuItem("Abrir administração", abrir("/admin")),
+        pystray.MenuItem("Abrir o Torres Comandas", lambda icon, item: mostrar(), default=True),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem(f"Endereço na rede: {url_rede}", None, enabled=False),
+        pystray.MenuItem(f"Computador principal — {ip_rede}:{porta}", None, enabled=False),
         pystray.MenuItem("Abrir pasta de dados (backup)", lambda icon, item: _abrir_pasta(pasta_dados)),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Sair (desliga o sistema)", sair),
+        pystray.MenuItem("Sair (desliga o sistema para todas as máquinas)", lambda icon, item: sair()),
     )
-    return pystray.Icon("torres_comandas", imagem_icone(), "Torres Comandas", menu)
+    return pystray.Icon("torres_comandas", imagem_icone(), "Torres Comandas — computador principal", menu)

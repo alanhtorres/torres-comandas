@@ -800,3 +800,46 @@ def test_app_android_para_baixar_e_conectar(tmp_path):
     r = admin.get("/app/instalar")
     assert r.status_code == 200 and b"<svg" in r.data and b"http://192.168.0.10:8090/app" in r.data
     assert b"/app/instalar" in admin.get("/").data
+
+
+# --- Programa (abas) e tela do bar ---------------------------------------------
+
+def test_abas_do_programa_seguem_as_permissoes(ambiente, admin):
+    app, banco, _ = ambiente
+    import re
+    abas = lambda c, q="": re.findall(r'data-aba="(\w+)"', c.get("/area" + q).data.decode())
+    assert abas(admin) == ["caixa", "garcom", "cozinha", "painel", "admin"]
+    banco.salvar_config({"tela_bar": True, "modo_comandas_ativo": True})
+    assert abas(admin) == ["caixa", "comandas", "garcom", "cozinha", "bar", "painel", "admin"]
+    criar_usuario(admin, "coz", ["cozinha"])
+    cozinha = entrar(app, "coz")
+    assert abas(cozinha) == ["cozinha", "bar", "painel"]
+    assert b'data-inicial="bar"' in cozinha.get("/area?tela=bar").data
+    assert b'data-inicial=""' in cozinha.get("/area?tela=admin").data  # aba que ele não tem
+    assert app.test_client().get("/area").status_code == 302  # sem login
+
+
+def test_tela_do_bar_marca_pronto_so_o_bar(ambiente, admin):
+    app, banco, _ = ambiente
+    banco.salvar_config({"tela_bar": True})
+    chope = admin.post("/api/produtos", json={"nome": "Chope", "preco_centavos": 1200, "destino": "bar"}).get_json()["produto"]
+    lanche = admin.post("/api/produtos", json={"nome": "X", "preco_centavos": 2000, "destino": "cozinha"}).get_json()["produto"]
+    p = admin.post("/api/pedidos", json={"itens": [{"produto_id": chope["id"]}, {"produto_id": lanche["id"]}]}).get_json()["pedido"]
+    assert p["preparo"] == {"cozinha": "novo", "bar": "novo"}
+    pagina = admin.get("/bar")
+    assert pagina.status_code == 200 and b'data-setor="bar"' in pagina.data and "🍹 Bar".encode() in pagina.data
+    r = admin.post(f"/api/pedidos/{p['id']}/status", json={"status": "pronto", "setor": "bar"}).get_json()
+    assert r["pedido"]["status"] == "preparando" and r["pedido"]["preparo"]["bar"] == "pronto"
+    r = admin.post(f"/api/pedidos/{p['id']}/status", json={"status": "pronto", "setor": "cozinha"}).get_json()
+    assert r["pedido"]["status"] == "pronto"
+    assert admin.post(f"/api/pedidos/{p['id']}/status", json={"status": "pronto", "setor": "adega"}).status_code == 400
+
+
+def test_login_volta_para_a_aba_pedida(ambiente, admin):
+    app, banco, _ = ambiente
+    c = app.test_client()
+    r = c.get("/area?tela=bar")
+    assert r.status_code == 302 and "proximo=/area?tela%3Dbar" in r.headers["Location"]
+    r = c.post("/login?proximo=/area?tela%3Dbar", data={"usuario": "ana", "senha": "1234"})
+    assert r.headers["Location"].endswith("/area?tela=bar")
+    assert "proximo=/caixa" in app.test_client().get("/caixa").headers["Location"]

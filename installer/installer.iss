@@ -35,11 +35,13 @@ RestartApplications=no
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "startupicon"; Description: "Iniciar automaticamente com o Windows (recomendado: é o servidor da loja)"; GroupDescription: "Inicialização:"
+Name: "startupicon"; Description: "Abrir automaticamente ao ligar o computador (recomendado)"; GroupDescription: "Inicialização:"
 Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDescription: "Atalhos adicionais:"
 
 [Files]
 Source: "..\dist\TorresComandas\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Só instala o WebView2 (janela do programa) se o Windows ainda não tiver.
+Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: FaltaWebView2
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -53,8 +55,26 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: st
 ; Remove antes pra não acumular regras repetidas ao atualizar por cima.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Torres Comandas"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Torres Comandas"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any"; Flags: runhidden; StatusMsg: "Liberando o programa no Firewall do Windows..."
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; Flags: waituntilterminated; StatusMsg: "Instalando o componente da janela do programa (WebView2)..."; Check: FaltaWebView2
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName} agora"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; RunOnceId: "FecharApp"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Torres Comandas"""; Flags: runhidden; RunOnceId: "RemoverFirewall"
+
+[Code]
+// O WebView2 (motor do Edge) mostra a janela do programa. Já vem no Windows 11
+// e no Windows 10 atualizado.
+function TemWebView2(Raiz: Integer; Chave: String): Boolean;
+var
+  Versao: String;
+begin
+  Result := RegQueryStringValue(Raiz, Chave, 'pv', Versao) and (Versao <> '') and (Versao <> '0.0.0.0');
+end;
+
+function FaltaWebView2: Boolean;
+begin
+  Result := not (TemWebView2(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}')
+    or TemWebView2(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}')
+    or TemWebView2(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'));
+end;

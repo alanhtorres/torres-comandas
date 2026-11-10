@@ -48,23 +48,7 @@
   </main>
   <script src="{{ url_for('static', filename='comum.js') }}"></script>
   <script>
-    document.getElementById("trocar-senha").addEventListener("click", (e) => {
-      e.preventDefault();
-      const atual = C.el("input", { type: "password", autocomplete: "current-password", required: true });
-      const nova = C.el("input", { type: "password", autocomplete: "new-password", minlength: 4, required: true });
-      const conf = C.el("input", { type: "password", autocomplete: "new-password", minlength: 4, required: true });
-      C.dialogo({
-        titulo: "Trocar minha senha",
-        corpo: C.el("div", {}, C.el("label", {}, "Senha atual"), atual, C.el("label", {}, "Nova senha"), nova,
-          C.el("label", {}, "Repita a nova senha"), conf),
-        confirmar: "Salvar",
-        aoConfirmar: async () => {
-          if (nova.value !== conf.value) throw new Error("As senhas novas não conferem.");
-          await C.api("POST", "/api/minha-senha", { atual: atual.value, nova: nova.value });
-          C.aviso("Senha alterada", "ok");
-        },
-      });
-    });
+    document.getElementById("trocar-senha").addEventListener("click", (e) => { e.preventDefault(); C.trocarMinhaSenha(); });
   </script>
 </body>
 </html>

@@ -36,6 +36,15 @@ Remove-Item -Recurse -Force "build", "dist" -ErrorAction SilentlyContinue
 Write-Host "==> Gerando ícone" -ForegroundColor Cyan
 Run $py @("icon\gerar_icone.py")
 
+# Instalador do WebView2 (componente do Windows que mostra a janela do
+# programa). O Windows 10/11 atualizado já tem; o instalador só roda este
+# quando falta (precisa de internet nesse momento).
+$webview2 = "installer\MicrosoftEdgeWebview2Setup.exe"
+if (-not (Test-Path $webview2)) {
+    Write-Host "==> Baixando o instalador do WebView2" -ForegroundColor Cyan
+    Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $webview2
+}
+
 Write-Host "==> Empacotando com PyInstaller" -ForegroundColor Cyan
 Run $py @("-m", "PyInstaller", "build_tools\torres_comandas.spec", "--noconfirm")
 if (-not (Test-Path "dist\TorresComandas\TorresComandas.exe")) {

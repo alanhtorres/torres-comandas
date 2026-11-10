@@ -302,6 +302,9 @@
             <em>deste PC</em> (o que roda o Torres Comandas) com o driver do fabricante ou "Generic / Text Only" e escolha pelo nome.
             Pode ser a mesma impressora para mais de uma função.</p>
           {{ bloco_impressora("cozinha", "Imprimir os pedidos na cozinha", "192.168.0.50") }}
+          <label class="inline" style="margin-top: 16px"><input type="checkbox" name="tela_bar"> Usar a <strong>tela do bar</strong>
+            (como a da cozinha): os produtos do bar aparecem numa tela, o bar marca "pronto" e o pedido só fica pronto quando
+            cozinha e bar terminarem. Pode usar junto com a impressora do bar ou no lugar dela.</label>
           {{ bloco_impressora("bar", "Imprimir os pedidos no bar (produtos marcados para sair no bar)", "192.168.0.52", "margin-top: 16px") }}
           {{ bloco_impressora("caixa", "Impressora do caixa (conferência de conta e fechamento de caixa)", "192.168.0.51", "margin-top: 16px") }}
           <p class="dica">Qual categoria sai em qual impressora: escolha em <a href="#produtos">Cardápio</a>, na linha de cada categoria.</p>

@@ -8,3 +8,5 @@ pystray>=0.19,<1.0
 # relatórios para download: planilha Excel (MIT) e PDF (BSD)
 openpyxl>=3.1,<4.0
 reportlab>=4.0,<5.0
+# janela do programa no Windows (WebView2, motor do Edge) — licença BSD
+pywebview>=5.3,<6.0; sys_platform == "win32"

@@ -16,6 +16,16 @@ segno_datas, segno_binaries, segno_hidden = collect_all("segno")
 rl_datas, rl_binaries, rl_hidden = collect_all("reportlab")
 xl_datas, xl_binaries, xl_hidden = collect_all("openpyxl")
 
+# Janela do programa (pywebview + WebView2 via pythonnet), só no Windows.
+if sys.platform == "win32":
+    wv_datas, wv_binaries, wv_hidden = collect_all("webview")
+    wv_hidden += ["clr", "clr_loader", "pythonnet", "webview.platforms.winforms", "webview.platforms.edgechromium"]
+    for pacote in ("pythonnet", "clr_loader"):
+        d, b, h = collect_all(pacote)
+        wv_datas, wv_binaries, wv_hidden = wv_datas + d, wv_binaries + b, wv_hidden + h
+else:
+    wv_datas, wv_binaries, wv_hidden = [], [], []
+
 # Só o backend de bandeja do sistema em que o build está rodando.
 bandeja = ["pystray._win32"] if sys.platform == "win32" else ["pystray._xorg", "pystray._appindicator"]
 
@@ -27,12 +37,13 @@ app_android = [(str(pasta_app), "comandas/app_android")] if (pasta_app / "torres
 a = Analysis(
     [str(raiz / "main.py")],
     pathex=[str(src)],
-    binaries=segno_binaries + rl_binaries + xl_binaries,
+    binaries=segno_binaries + rl_binaries + xl_binaries + wv_binaries,
     datas=[
         (str(src / "comandas" / "web" / "templates"), "comandas/web/templates"),
         (str(src / "comandas" / "web" / "static"), "comandas/web/static"),
-    ] + app_android + segno_datas + rl_datas + xl_datas,
-    hiddenimports=["waitress", "comandas.bandeja"] + bandeja + segno_hidden + rl_hidden + xl_hidden,
+        (str(src / "comandas" / "web" / "assistente.html"), "comandas/web"),
+    ] + app_android + segno_datas + rl_datas + xl_datas + wv_datas,
+    hiddenimports=["waitress", "comandas.bandeja", "comandas.programa"] + bandeja + segno_hidden + rl_hidden + xl_hidden + wv_hidden,
     excludes=["tkinter", "pytest"],
     noarchive=False,
 )

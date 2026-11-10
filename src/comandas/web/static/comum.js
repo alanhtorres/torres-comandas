@@ -2,11 +2,27 @@
 (function () {
   "use strict";
 
+  // Tela aberta dentro de uma aba do programa (página /area).
+  const embutido = window.top !== window;
+  if (embutido) document.documentElement.classList.add("embutido");
+  // No programa, quem vai para o login é a janela inteira (não só a aba).
+  const janela = embutido ? window.top : window;
+
+  // No programa instalado: F11 liga/desliga a tela cheia; F2, na TV do
+  // painel (que não tem abas), volta para as abas e o botão "Esta máquina".
+  document.addEventListener("keydown", (e) => {
+    const programa = janela.pywebview && janela.pywebview.api;
+    if (!programa) return;
+    if (e.key === "F11") { e.preventDefault(); programa.alternar_tela_cheia(); }
+    if (e.key === "F2" && janela.location.pathname === "/painel") { e.preventDefault(); programa.ir_para_abas(); }
+  });
+
   // Volta para a mesma tela depois de entrar, mostrando por que saiu.
   async function irParaLogin(res) {
     let motivo = "";
     try { motivo = (await res.clone().json()).motivo || ""; } catch (e) { /* sem corpo */ }
-    location.href = "/login?proximo=" + encodeURIComponent(location.pathname) + (motivo ? "&motivo=" + motivo : "");
+    janela.location.href = "/login?proximo=" + encodeURIComponent(janela.location.pathname + janela.location.search)
+      + (motivo ? "&motivo=" + motivo : "");
   }
 
   async function api(metodo, url, corpo) {
@@ -358,7 +374,24 @@
   }
   botaoTema();
 
+  function trocarMinhaSenha() {
+    const atual = el("input", { type: "password", autocomplete: "current-password", required: true });
+    const nova = el("input", { type: "password", autocomplete: "new-password", minlength: 4, required: true });
+    const conf = el("input", { type: "password", autocomplete: "new-password", minlength: 4, required: true });
+    dialogo({
+      titulo: "Trocar minha senha",
+      corpo: el("div", {}, el("label", {}, "Senha atual"), atual, el("label", {}, "Nova senha"), nova,
+        el("label", {}, "Repita a nova senha"), conf),
+      confirmar: "Salvar",
+      aoConfirmar: async () => {
+        if (nova.value !== conf.value) throw new Error("As senhas novas não conferem.");
+        await api("POST", "/api/minha-senha", { atual: atual.value, nova: nova.value });
+        aviso("Senha alterada", "ok");
+      },
+    });
+  }
+
   window.C = { api, moeda, el, minutosDesde, hora, dataHora, hojeISO, aviso, bip, falar, somLiberado, liberarSom, acompanhar,
     centavos, reais, campoDinheiro, dialogo, STATUS_NOME, mascaraTelefone, mascaraCpf, formCliente,
-    preencherMensagem, abrirWhatsapp };
+    preencherMensagem, abrirWhatsapp, trocarMinhaSenha, embutido };
 })();
