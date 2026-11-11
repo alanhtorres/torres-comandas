@@ -69,3 +69,10 @@ textarea { resize: vertical; }
 .transmissao { margin-top: 16px; border-top: 1px solid var(--borda); padding-top: 12px; }
 .transmissao summary { cursor: pointer; }
 .transmissao ol { padding-left: 22px; line-height: 1.5; }
+
+/* Configurações: conexões (IP do principal) e saída dos pedidos por setor */
+.ip-principal { font-size: 1.6rem; color: var(--destaque); letter-spacing: .5px; user-select: all; }
+.passos-conexao { margin: 8px 0 12px; padding-left: 20px; line-height: 1.5; }
+.passos-conexao li { margin-bottom: 6px; }
+#cartao-saida h3 { margin: 20px 0 6px; font-size: 1.05rem; border-top: 1px solid var(--borda); padding-top: 14px; }
+.aviso-setor { color: var(--amarelo, #f59e0b); }

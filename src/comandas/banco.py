@@ -46,6 +46,10 @@ CONFIG_PADRAO = {
     "impressora_cozinha_host": "",
     "impressora_cozinha_porta": 9100,
     "impressora_cozinha_usb": "",
+    # Tela da cozinha: os produtos com destino "cozinha" esperam a cozinha
+    # marcar "pronto". Desligada, a cozinha só imprime (o pedido já nasce
+    # pronto e o caixa chama no painel).
+    "tela_cozinha": True,
     # Tela do bar (como a da cozinha): os produtos com destino "bar" esperam
     # o bar marcar "pronto". Desligada, o bar só imprime e esses itens não
     # seguram o pedido.
@@ -958,10 +962,11 @@ class Banco:
             total += produto["preco_centavos"] * quantidade
 
         # Sem nada para preparar (só bebidas, chips...), o pedido já nasce
-        # "pronto": não passa pela cozinha nem pela impressora dela. O bar só
-        # segura o pedido quando tem tela (senão ele só imprime).
-        precisa_cozinha = any(p["vai_cozinha"] for p, _, _ in linhas_itens)
-        precisa_bar = self.config()["tela_bar"] and any(p["destino"] == "bar" for p, _, _ in linhas_itens)
+        # "pronto": não passa pela cozinha nem pela impressora dela. Cozinha e
+        # bar só seguram o pedido quando têm tela (senão eles só imprimem).
+        cfg = self.config()
+        precisa_cozinha = cfg["tela_cozinha"] and any(p["vai_cozinha"] for p, _, _ in linhas_itens)
+        precisa_bar = cfg["tela_bar"] and any(p["destino"] == "bar" for p, _, _ in linhas_itens)
         aguarda = precisa_cozinha or precisa_bar
         with self._transacao():
             agora = self.agora()

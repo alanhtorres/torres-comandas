@@ -2,12 +2,13 @@
 (WebView2, o mesmo motor do Edge), sem navegador e sem digitar endereço.
 
 - Primeira vez: pergunta se este computador é o principal ou se conecta a
-  um principal (que ele acha sozinho na rede).
+  um principal pelo IP dele. Depois disso o papel não muda mais pelas telas
+  (para recomeçar, apaga-se a pasta de dados).
 - Principal: liga o sistema (banco + servidor) e mostra a janela. Fechar a
   janela só a esconde: o sistema continua no ar para as outras máquinas, com
   o ícone perto do relógio.
-- Terminal: mostra as telas do principal. Se o principal mudar de IP, acha
-  de novo sozinho.
+- Terminal: mostra as telas do principal. Se o principal não responder ao
+  abrir, mostra a tela de reconexão (tenta de novo sozinho, ou digita outro IP).
 """
 import json
 import logging
@@ -128,24 +129,18 @@ class Api:
         """Atalho F2 na tela do painel (que não tem barra de abas)."""
         self._p.carregar(self._p.base() + "/area?tela=painel")
 
-    def reconfigurar(self) -> None:
-        """Volta à escolha "principal ou conectar" (vale ao escolher de novo)."""
-        self._p.mostrar_assistente("escolher")
-
-    def procurar(self) -> list:
-        return descoberta.procurar()
-
-    def procurar_rapido(self) -> list:
-        return descoberta.procurar(tempo=1.0, varrer=False)
-
     def conectar(self, endereco: str) -> dict:
         url = descoberta.normalizar(endereco)
         if not url:
-            return {"ok": False, "erro": "Digite o endereço do computador principal (ex.: 192.168.0.10)."}
+            return {"ok": False, "erro": "Digite o IP do computador principal (ex.: 192.168.0.10)."}
         info = descoberta.identificar(url)
         if not info:
-            return {"ok": False, "erro": f"Não encontrei o Torres Comandas em {url.replace('http://', '')}. "
-                                         "Confira se o computador principal está ligado e na mesma rede."}
+            return {"ok": False, "erro": f"O computador principal não respondeu em {url.replace('http://', '')}. "
+                                         "Confira o IP (em Administração > Configurações > Conexões, no computador "
+                                         "principal), se ele está ligado com o Torres Comandas aberto e se os dois "
+                                         "estão na mesma rede."}
+        if self._p.maquina.modo == "terminal" and self._p.maquina.id and info["id"] != self._p.maquina.id:
+            log.info("Conectando a outro sistema: %s (antes %s)", info["url"], self._p.maquina.servidor)
         self._p.usar_terminal(info)
         return {"ok": True}
 
@@ -157,6 +152,9 @@ class Api:
         return {"ok": False}
 
     def ser_principal(self) -> dict:
+        # Só na primeira vez: um terminal não vira principal pelas telas.
+        if self._p.maquina.modo == "terminal":
+            return {"ok": False, "erro": "Este computador já está ligado a um computador principal."}
         self._p.usar_principal()
         return {"ok": True}
 
@@ -186,16 +184,12 @@ class Programa:
         if self.janela:
             self.janela.load_url(url)
 
-    def mostrar_assistente(self, modo: str = "escolher", mensagem: str = "") -> None:
-        if self.janela:
-            self.janela.load_html(self._html_assistente(modo, mensagem))
-
-    @staticmethod
-    def _html_assistente(modo: str, mensagem: str = "") -> str:
+    def _html_assistente(self, modo: str, mensagem: str = "") -> str:
         html = ASSISTENTE.read_text(encoding="utf-8")
         inicio, fim = html.index("/*ESTADO*/"), html.index("/*FIM*/")
+        ip = self.maquina.servidor.replace("http://", "").removesuffix(":8090")
         # "<\/" para um texto vindo da rede (nome da loja) não fechar o <script>
-        estado = json.dumps({"modo": modo, "mensagem": mensagem}, ensure_ascii=False).replace("</", "<\\/")
+        estado = json.dumps({"modo": modo, "mensagem": mensagem, "ip": ip}, ensure_ascii=False).replace("</", "<\\/")
         return html[:inicio] + estado + html[fim + len("/*FIM*/"):]
 
     def usar_principal(self) -> None:
@@ -215,16 +209,9 @@ class Programa:
         self.carregar(info["url"] + self.maquina.caminho_inicial())
 
     def achar_principal(self) -> Optional[dict]:
-        """O principal salvo; se não responder, o mesmo sistema (pelo id) em outro IP."""
+        """O principal no IP salvo (None se não responder)."""
         if self.maquina.servidor:
-            info = descoberta.identificar(self.maquina.servidor)
-            if info:
-                return info
-        if self.maquina.id:
-            porta = descoberta.urlsplit(self.maquina.servidor).port or descoberta.PORTA_PADRAO
-            for info in descoberta.procurar(portas_varredura=(porta,)):
-                if info["id"] == self.maquina.id:
-                    return info
+            return descoberta.identificar(self.maquina.servidor)
         return None
 
     def _ligar_principal(self) -> None:
@@ -245,8 +232,6 @@ class Programa:
         if m.modo == "terminal":
             info = self.achar_principal()
             if info:
-                if info["url"] != m.servidor:
-                    self.usar_terminal(info)
                 return info["url"] + m.caminho_inicial()
         return None
 
@@ -289,24 +274,6 @@ class Programa:
             log.exception("Não foi possível criar o ícone perto do relógio")
             self.bandeja = None
 
-    def _vigiar_principal(self) -> None:
-        """Terminal: se o principal sumir (ex.: mudou de IP), reencontra e recarrega."""
-        falhas = 0
-        while not self.saindo:
-            time.sleep(30)
-            if self.maquina.modo != "terminal" or not self.maquina.servidor:
-                continue
-            if descoberta.identificar(self.maquina.servidor):
-                falhas = 0
-                continue
-            falhas += 1
-            if falhas >= 2:
-                info = self.achar_principal()
-                if info and info["url"] != self.maquina.servidor:
-                    log.info("O computador principal mudou de endereço: %s", info["url"])
-                    self.usar_terminal(info)
-                    falhas = 0
-
     def rodar(self) -> None:
         ouvir_instancia(self.mostrar_janela)
         url = self.url_inicial()
@@ -324,8 +291,10 @@ class Programa:
 
         mensagem = ""
         if modo_assistente == "reconectar":
-            mensagem = (f"Não encontrei o computador principal ({self.maquina.loja or self.maquina.servidor}). "
-                        "Confira se ele está ligado e com o Torres Comandas aberto. Tentando de novo sozinho...")
+            ip = self.maquina.servidor.replace("http://", "")
+            mensagem = (f"O computador principal ({self.maquina.loja + ' — ' if self.maquina.loja else ''}{ip}) "
+                        "não respondeu. Confira se ele está ligado e com o Torres Comandas aberto. "
+                        "Tentando de novo sozinho a cada 10 segundos...")
         self.janela = webview.create_window(
             "Torres Comandas",
             url=url,
@@ -336,7 +305,6 @@ class Programa:
             background_color="#0F172A",
         )
         self.janela.events.closing += self.ao_fechar
-        threading.Thread(target=self._vigiar_principal, daemon=True, name="vigia").start()
         if self.teste:
             threading.Thread(target=self._teste_janela, daemon=True, name="teste").start()
         webview.start(private_mode=False, storage_path=str(self.dados / "janela"))

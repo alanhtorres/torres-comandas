@@ -3,14 +3,9 @@ package br.com.torres.garcom
 import android.content.Context
 import org.json.JSONObject
 import java.net.HttpURLConnection
-import java.net.Inet4Address
 import java.net.InetSocketAddress
-import java.net.NetworkInterface
 import java.net.Socket
 import java.net.URL
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /** Um Torres Comandas encontrado na rede. */
 data class Sistema(val url: String, val id: String, val loja: String, val appVersaoCodigo: Int)
@@ -80,57 +75,19 @@ object Rede {
         }
     }
 
-    /** IPs deste celular nas redes locais (Wi-Fi da loja). */
-    private fun ipsLocais(): List<Inet4Address> {
-        val lista = mutableListOf<Inet4Address>()
-        try {
-            for (interf in NetworkInterface.getNetworkInterfaces()) {
-                if (!interf.isUp || interf.isLoopback) continue
-                for (ip in interf.inetAddresses) {
-                    if (ip is Inet4Address && ip.isSiteLocalAddress) lista.add(ip)
-                }
-            }
-        } catch (e: Exception) {
-            // sem permissão para listar as interfaces: segue com o que tiver
-        }
-        return lista
+    /** "http://192.168.0.10:8090" -> "192.168.0.10" (a porta só aparece se não for a padrão). */
+    fun ipParaMostrar(url: String?): String {
+        val t = (url ?: "").removePrefix("http://").removePrefix("https://")
+        return t.removeSuffix(":$PORTA_PADRAO")
     }
 
-    /**
-     * Procura o sistema na rede: testa a porta em todos os endereços da
-     * mesma faixa do celular (ex.: 192.168.0.1 a 192.168.0.254). Leva poucos
-     * segundos. [aoAchar] é chamado a cada sistema encontrado.
-     */
-    fun procurar(portas: Collection<Int>, aoAchar: (Sistema) -> Unit = {}): List<Sistema> {
-        val achados = ConcurrentHashMap<String, Sistema>()
-        val pool = Executors.newFixedThreadPool(64)
-        for (ip in ipsLocais()) {
-            val b = ip.address
-            val prefixo = "${b[0].toInt() and 255}.${b[1].toInt() and 255}.${b[2].toInt() and 255}."
-            for (n in 1..254) {
-                val host = prefixo + n
-                for (porta in portas) {
-                    pool.execute {
-                        try {
-                            Socket().use { it.connect(InetSocketAddress(host, porta), 400) }
-                        } catch (e: Exception) {
-                            return@execute
-                        }
-                        val s = identificar("http://$host:$porta") ?: return@execute
-                        if (achados.putIfAbsent(s.id, s) == null) aoAchar(s)
-                    }
-                }
-            }
-        }
-        pool.shutdown()
-        pool.awaitTermination(40, TimeUnit.SECONDS)
-        return achados.values.toList()
-    }
-
-    fun portaDe(url: String?): Int = try {
-        URL(url).port.takeIf { it > 0 } ?: PORTA_PADRAO
+    /** Algum programa atende nesse IP e porta? (Para explicar por que não conectou.) */
+    fun portaAberta(url: String, timeoutMs: Int = 2500): Boolean = try {
+        val u = URL(url)
+        Socket().use { it.connect(InetSocketAddress(u.host, if (u.port > 0) u.port else PORTA_PADRAO), timeoutMs) }
+        true
     } catch (e: Exception) {
-        PORTA_PADRAO
+        false
     }
 
     /** Requisição simples com o login do garçom (usada pelo serviço e pelas notificações). */

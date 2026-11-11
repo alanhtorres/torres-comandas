@@ -72,10 +72,10 @@
           <div class="largo"><label for="produto-descricao">Descrição (aparece no cardápio do QR code)</label><input id="produto-descricao" maxlength="200"></div>
           <div><label for="produto-foto">Foto (opcional)</label><input id="produto-foto" type="file" accept="image/*"></div>
           <div><label>&nbsp;</label><label class="inline"><input id="produto-ativo" type="checkbox" checked> Disponível para venda</label></div>
-          <div class="largo"><label for="produto-destino">Sai na impressora</label>
+          <div class="largo"><label for="produto-destino">Vai para</label>
             <select id="produto-destino">
-              <option value="cozinha">Cozinha (precisa de preparo — aparece na tela da cozinha)</option>
-              <option value="bar">Bar (bebidas, drinks — sai na impressora do bar)</option>
+              <option value="cozinha">Cozinha (precisa de preparo — tela e/ou impressora da cozinha)</option>
+              <option value="bar">Bar (bebidas, drinks — tela e/ou impressora do bar)</option>
               <option value="nenhum">Nenhuma (já pronto — bebida em lata, chips, sobremesa embalada)</option>
             </select>
             <p class="dica">"Nenhuma": o item aparece só no caixa e no garçom. Para mudar a categoria inteira de uma vez, use a escolha
@@ -231,14 +231,28 @@
     {% if pode('configuracoes') %}
     <section id="aba-config" class="aba" hidden>
       <form id="form-config">
+        <div class="cartao" id="cartao-conexoes">
+          <h2>🔌 Conexões</h2>
+          <p>IP do computador principal: <strong class="ip-principal" id="ip-principal">{{ ip_principal }}</strong></p>
+          <ul class="passos-conexao">
+            <li><strong>Outras máquinas</strong> (cozinha, bar, segundo caixa): instale o Torres Comandas, escolha
+              "Conectar ao computador principal" e digite esse IP.</li>
+            <li><strong>Celular do garçom</strong>: instale o app{% if app_disponivel %} (<a href="/app/instalar" target="_blank">QR code para baixar</a>){% endif %}
+              e digite esse IP nele.</li>
+            <li><strong>📺 TV do painel de chamada</strong>: no navegador da TV, abra <code>{{ url_base }}/painel</code>
+              (não precisa de login). Ou ligue a TV num computador com o programa e escolha a tela "Painel" em 🖥️ Esta máquina.</li>
+          </ul>
+          <p class="dica"><strong>Importante:</strong> reserve esse IP para este computador no roteador ("IP fixo" ou "reserva DHCP").
+            Se o IP mudar, as outras máquinas e os celulares param de conectar até digitar o novo.</p>
+          <label for="cfg-url_base">Endereço usado nos QR codes das mesas e do app</label>
+          <input id="cfg-url_base" name="url_base" placeholder="">
+          <p class="dica">Deixe vazio para usar o IP acima. Só preencha se o IP detectado estiver errado (ex.: http://192.168.0.10:8090).</p>
+        </div>
+
         <div class="cartao">
           <h2>Estabelecimento</h2>
           <label for="cfg-nome_loja">Nome (aparece nas telas e nos cupons)</label>
           <input id="cfg-nome_loja" name="nome_loja" maxlength="60">
-          <label for="cfg-url_base">Endereço deste servidor na rede (usado nos QR codes)</label>
-          <input id="cfg-url_base" name="url_base" placeholder="">
-          <p class="dica">Deixe vazio para detectar sozinho. Recomendado: reserve um IP fixo para este PC no roteador e
-            preencha aqui (ex.: http://192.168.0.10:8090) — assim os QR codes impressos nunca mudam.</p>
           <label for="cfg-tema_padrao">Cores das telas da equipe (caixa, cozinha, garçom, comandas, administração)</label>
           <select id="cfg-tema_padrao" name="tema_padrao">
             <option value="escuro">Modo escuro</option>
@@ -295,19 +309,32 @@
             <div><label>&nbsp;</label><button type="button" data-teste="{{ qual }}">Imprimir teste</button></div>
           </div>
         {% endmacro %}
+        <div class="cartao" id="cartao-saida">
+          <h2>🍳 Cozinha e bar: como saem os pedidos</h2>
+          <p class="dica">Para cada lugar de preparo, escolha se os pedidos aparecem numa <strong>tela</strong> (TV ou monitor ligado
+            a um computador com o Torres Comandas), saem na <strong>impressora</strong>, ou os dois. Qual produto vai para a
+            cozinha ou para o bar: escolha em <a href="#produtos">Cardápio</a>, na linha de cada categoria.</p>
+
+          <h3>👨‍🍳 Cozinha</h3>
+          <label class="inline"><input type="checkbox" name="tela_cozinha" data-setor-tela="cozinha"> <span>Mostrar os pedidos numa
+            tela da cozinha (a cozinha marca "pronto" e o caixa vê quando terminou)</span></label>
+          {{ bloco_impressora("cozinha", "Imprimir os pedidos na impressora da cozinha", "192.168.0.50") }}
+          <p class="dica aviso-setor" data-aviso-setor="cozinha" hidden>⚠️ Sem tela e sem impressora: a cozinha não fica sabendo dos pedidos.</p>
+
+          <h3>🍹 Bar / bebidas</h3>
+          <label class="inline"><input type="checkbox" name="tela_bar" data-setor-tela="bar"> <span>Mostrar os pedidos numa
+            tela do bar (o bar marca "pronto"; com cozinha e bar, o pedido fica pronto quando os dois terminarem)</span></label>
+          {{ bloco_impressora("bar", "Imprimir os pedidos na impressora do bar", "192.168.0.52") }}
+          <p class="dica aviso-setor" data-aviso-setor="bar" hidden>⚠️ Sem tela e sem impressora: o bar não fica sabendo dos pedidos.</p>
+
+          <p class="dica" style="margin-top: 14px">Onde fica cada tela: no computador da cozinha (ou do bar), abra o Torres Comandas,
+            clique em <strong>🖥️ Esta máquina</strong> e escolha a tela que ele abre ao ligar, em tela cheia. Use um usuário só de
+            cozinha nessa máquina.</p>
+        </div>
+
         <div class="cartao">
-          <h2>Impressoras térmicas</h2>
-          <p class="dica">Impressoras no padrão ESC/POS — Epson, Elgin, Bematech, Tanca e similares. <strong>Rede:</strong> informe o IP
-            (descubra imprimindo a folha de autoteste da impressora), porta 9100. <strong>USB:</strong> instale a impressora no Windows
-            <em>deste PC</em> (o que roda o Torres Comandas) com o driver do fabricante ou "Generic / Text Only" e escolha pelo nome.
-            Pode ser a mesma impressora para mais de uma função.</p>
-          {{ bloco_impressora("cozinha", "Imprimir os pedidos na cozinha", "192.168.0.50") }}
-          <label class="inline" style="margin-top: 16px"><input type="checkbox" name="tela_bar"> Usar a <strong>tela do bar</strong>
-            (como a da cozinha): os produtos do bar aparecem numa tela, o bar marca "pronto" e o pedido só fica pronto quando
-            cozinha e bar terminarem. Pode usar junto com a impressora do bar ou no lugar dela.</label>
-          {{ bloco_impressora("bar", "Imprimir os pedidos no bar (produtos marcados para sair no bar)", "192.168.0.52", "margin-top: 16px") }}
-          {{ bloco_impressora("caixa", "Impressora do caixa (conferência de conta e fechamento de caixa)", "192.168.0.51", "margin-top: 16px") }}
-          <p class="dica">Qual categoria sai em qual impressora: escolha em <a href="#produtos">Cardápio</a>, na linha de cada categoria.</p>
+          <h2>🖨️ Impressora do caixa e papel</h2>
+          {{ bloco_impressora("caixa", "Impressora do caixa (conferência de conta e fechamento de caixa)", "192.168.0.51") }}
           <div class="grade-form">
             <div><label for="cfg-impressora_colunas">Largura do papel</label>
               <select id="cfg-impressora_colunas" name="impressora_colunas"><option value="48">80 mm (48 colunas)</option><option value="32">58 mm (32 colunas)</option></select></div>
@@ -316,6 +343,10 @@
                 <option value="cp850">Padrão (página 850)</option><option value="cp860">Português (página 860)</option><option value="ascii">Sem acentos (se sair caractere estranho)</option>
               </select></div>
           </div>
+          <p class="dica">Impressoras térmicas no padrão ESC/POS — Epson, Elgin, Bematech, Tanca e similares. <strong>Rede:</strong> informe o IP
+            (descubra imprimindo a folha de autoteste da impressora), porta 9100. <strong>USB:</strong> instale a impressora no Windows
+            <em>do computador principal</em> com o driver do fabricante ou "Generic / Text Only" e escolha pelo nome.
+            Pode ser a mesma impressora para mais de uma função.</p>
         </div>
 
         <div class="cartao">

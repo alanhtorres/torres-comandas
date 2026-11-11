@@ -37,7 +37,8 @@
   $("trocar-senha").addEventListener("click", () => C.trocarMinhaSenha());
 
   // No programa instalado (janela própria), o botão "Esta máquina" configura
-  // o que este computador mostra e a qual computador principal ele se liga.
+  // a tela que este computador abre ao ligar e a tela cheia. O papel
+  // (principal ou conectado) é escolhido só na instalação.
   function quandoNoPrograma(fazer) {
     if (window.pywebview && window.pywebview.api) fazer();
     else window.addEventListener("pywebviewready", fazer);
@@ -55,19 +56,14 @@
     tela.value = info.tela || "";
     const cheia = el("input", { type: "checkbox" });
     cheia.checked = !!info.tela_cheia;
-    const trocar = el("button", { type: "button", onclick: async () => {
-      if (!confirm("Escolher de novo se este computador é o principal ou a qual principal ele se conecta?")) return;
-      await api.reconfigurar();
-    } }, info.modo === "principal" ? "Mudar o papel deste computador" : "Trocar o computador principal");
     C.dialogo({
       titulo: "🖥️ Esta máquina",
       corpo: el("div", {},
         el("p", { class: "dica" }, info.modo === "principal"
           ? "Este é o computador principal: os dados ficam aqui e as outras máquinas se conectam nele. Ele precisa ficar ligado."
-          : "Conectado ao computador principal: " + info.loja + " (" + info.servidor.replace("http://", "") + ")."),
+          : "Conectado ao computador principal " + (info.loja ? info.loja + " " : "") + "(IP " + info.servidor.replace("http://", "").replace(/:8090$/, "") + ")."),
         el("label", {}, "Tela que esta máquina abre ao ligar"), tela,
         el("label", { class: "inline" }, cheia, "Abrir em tela cheia (TV do painel, tela da cozinha) — F11 alterna"),
-        el("div", { style: "margin-top: 16px" }, trocar),
         el("p", { class: "dica" }, "Versão " + info.versao)),
       confirmar: "Salvar",
       aoConfirmar: async () => {

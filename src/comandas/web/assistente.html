@@ -31,6 +31,7 @@
     .status { color: var(--texto-2); min-height: 1.4em; }
     .erro { color: #fecaca; background: #450a0a; border-radius: 10px; padding: 10px 12px; }
     .linha { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    label { display: block; margin-bottom: 2px; }
     [hidden] { display: none !important; }
     @media (max-width: 640px) { .opcoes { grid-template-columns: 1fr; } }
   </style>
@@ -51,8 +52,8 @@
         <button class="opcao" id="ser-terminal">
           <div class="icone">🔌</div>
           <h2>Conectar ao computador principal</h2>
-          <p>Para as outras máquinas: cozinha, bar, segundo caixa, TV do painel. O programa acha o computador principal
-            sozinho na rede da loja.</p>
+          <p>Para as outras máquinas: cozinha, bar, segundo caixa, TV do painel. Você vai digitar o IP do computador
+            principal.</p>
         </button>
       </div>
     </div>
@@ -60,28 +61,27 @@
     <div id="passo-conectar" hidden>
       <div class="cartao">
         <p class="erro" id="aviso" hidden></p>
-        <div class="linha"><strong id="titulo-busca">Procurando o computador principal na rede...</strong></div>
-        <p class="status" id="status"></p>
-        <div id="achados"></div>
-        <div class="linha" style="margin-top: 14px">
-          <button class="acao secundario" id="procurar-de-novo">🔍 Procurar de novo</button>
+        <label for="endereco"><strong>IP do computador principal</strong></label>
+        <input id="endereco" placeholder="Ex.: 192.168.0.10" inputmode="decimal" autocomplete="off">
+        <div class="linha">
+          <button class="acao" id="conectar-endereco">Conectar</button>
           <button class="acao secundario" id="voltar">← Voltar</button>
         </div>
+        <p class="status" id="status"></p>
       </div>
       <div class="cartao">
-        <strong>Não achou?</strong>
-        <p class="status">Confira se o computador principal está ligado, com o Torres Comandas aberto, e na mesma rede (mesmo
-          roteador/Wi-Fi). Ou digite o endereço que aparece no computador principal (ícone do Torres Comandas perto do relógio):</p>
-        <input id="endereco" placeholder="Ex.: 192.168.0.10">
-        <button class="acao" id="conectar-endereco">Conectar</button>
+        <strong>Onde vejo o IP?</strong>
+        <p class="status">No computador principal: <strong>Administração → Configurações → Conexões</strong>, ou passando o mouse
+          no ícone laranja do Torres Comandas perto do relógio. Os dois computadores precisam estar na mesma rede da loja
+          (mesmo roteador).</p>
       </div>
     </div>
   </main>
   <script>
     (function () {
       "use strict";
-      // Preenchido pelo programa: {"modo": "escolher" | "reconectar", "mensagem": "..."}
-      const ESTADO = /*ESTADO*/{"modo": "escolher", "mensagem": ""}/*FIM*/;
+      // Preenchido pelo programa: {"modo": "escolher" | "reconectar", "mensagem": "...", "ip": "..."}
+      const ESTADO = /*ESTADO*/{"modo": "escolher", "mensagem": "", "ip": ""}/*FIM*/;
       const $ = (id) => document.getElementById(id);
       let api = null;
 
@@ -94,38 +94,17 @@
         $("passo-papel").hidden = true;
         $("passo-conectar").hidden = false;
         $("subtitulo").textContent = "Conectar este computador ao computador principal da loja";
-        procurar();
+        $("endereco").focus();
       }
 
-      function botaoSistema(s) {
-        const b = document.createElement("button");
-        b.className = "sistema";
-        b.innerHTML = "<strong></strong><small></small>";
-        b.querySelector("strong").textContent = "🏪 " + (s.loja || "Torres Comandas");
-        b.querySelector("small").textContent = s.url.replace("http://", "") + " — tocar para conectar";
-        b.addEventListener("click", () => conectar(s.url));
-        return b;
-      }
-
-      async function procurar() {
-        $("titulo-busca").textContent = "Procurando o computador principal na rede...";
-        $("status").textContent = "Isso leva poucos segundos.";
-        $("achados").replaceChildren();
-        const lista = await api.procurar();
-        $("achados").replaceChildren(...lista.map(botaoSistema));
-        if (!lista.length) {
-          $("titulo-busca").textContent = "Nenhum computador principal encontrado.";
-          $("status").textContent = "";
-        } else {
-          $("titulo-busca").textContent = lista.length === 1 ? "Computador principal encontrado:" : "Escolha o da sua loja:";
-          $("status").textContent = "";
-        }
-        return lista;
-      }
-
-      async function conectar(url) {
-        $("status").textContent = "Conectando...";
-        const r = await api.conectar(url);
+      async function conectar() {
+        const ip = $("endereco").value.trim();
+        if (!ip) { $("endereco").focus(); return; }
+        $("aviso").hidden = true;
+        $("status").textContent = "Conectando a " + ip + "...";
+        $("conectar-endereco").disabled = true;
+        const r = await api.conectar(ip);
+        $("conectar-endereco").disabled = false;
         if (!r.ok) {
           $("aviso").hidden = false;
           $("aviso").textContent = r.erro;
@@ -141,26 +120,24 @@
           $("passo-papel").hidden = false;
           $("subtitulo").textContent = "Como este computador vai ser usado na loja?";
         });
-        $("procurar-de-novo").addEventListener("click", procurar);
-        $("conectar-endereco").addEventListener("click", () => conectar($("endereco").value));
-        $("endereco").addEventListener("keydown", (e) => { if (e.key === "Enter") conectar($("endereco").value); });
+        $("conectar-endereco").addEventListener("click", conectar);
+        $("endereco").addEventListener("keydown", (e) => { if (e.key === "Enter") conectar(); });
         $("ser-principal").addEventListener("click", async () => {
+          if (!confirm("Este computador vai guardar os dados da loja e as outras máquinas vão se conectar nele.\n\n"
+            + "Só deve haver UM computador principal por loja. Continuar?")) return;
           $("ser-principal").disabled = true;
-          const existentes = await api.procurar_rapido();
-          if (existentes.length && !confirm("Já existe um computador principal nesta rede (" + existentes.map((s) => s.loja).join(", ")
-            + ").\n\nSó deve haver UM por loja. Usar este mesmo assim? (Se for outra loja na mesma rede, pode continuar.)")) {
-            $("ser-principal").disabled = false;
-            return;
-          }
           await api.ser_principal();
         });
 
         if (ESTADO.modo === "reconectar") {
-          // Terminal que não achou o principal: tenta de novo sozinho.
+          // Terminal que não achou o principal: tenta de novo sozinho no mesmo
+          // IP. Daqui não dá para virar principal (sem "Voltar").
           mostrarConectar();
+          $("voltar").hidden = true;
+          $("endereco").value = ESTADO.ip || "";
           $("aviso").hidden = false;
           $("aviso").textContent = ESTADO.mensagem;
-          // o mesmo sistema de antes (mesmo que o IP do principal tenha mudado)
+          $("status").textContent = "Se o IP do computador principal mudou, digite o novo e clique em Conectar.";
           setInterval(() => api.reconectar(), 10000);
         }
       });

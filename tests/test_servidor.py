@@ -80,7 +80,7 @@ def test_login_logout_e_redirecionamento(ambiente, admin):
     assert "Saiu do sistema" in acoes and "Tentativa de login recusada" in acoes
 
 
-@pytest.mark.parametrize("caminho", ["/", "/caixa", "/cozinha", "/garcom", "/comandas", "/painel", "/admin", "/admin/qrcodes"])
+@pytest.mark.parametrize("caminho", ["/area", "/caixa", "/cozinha", "/garcom", "/comandas", "/painel", "/admin", "/admin/qrcodes"])
 def test_telas_abrem_para_o_admin(admin, caminho):
     r = admin.get(caminho)
     assert r.status_code == 200
@@ -119,9 +119,10 @@ def test_cada_usuario_so_acessa_o_que_o_admin_liberou(ambiente, admin):
     assert garcom.get("/api/auditoria").status_code == 403
     assert garcom.get("/api/usuarios").status_code == 403
 
-    # a página inicial só mostra os atalhos permitidos
-    inicio = garcom.get("/").data.decode()
-    assert 'href="/caixa"' in inicio and 'href="/cozinha"' not in inicio and 'href="/admin"' not in inicio
+    # a entrada ("/") abre as abas, só com as telas permitidas
+    assert garcom.get("/").headers["Location"] == "/area"
+    inicio = garcom.get("/area").data.decode()
+    assert 'data-aba="caixa"' in inicio and 'data-aba="cozinha"' not in inicio and 'data-aba="admin"' not in inicio
 
 
 def test_permissoes_por_acao_no_pedido(ambiente, admin):
@@ -530,7 +531,7 @@ def test_modo_claro(ambiente, admin):
     assert b'data-tema="escuro"' in admin.get("/caixa").data
     assert admin.put("/api/config", json={"tema_padrao": "rosa"}).status_code == 400
     assert admin.put("/api/config", json={"tema_padrao": "claro"}).status_code == 200
-    for tela in ("/caixa", "/cozinha", "/admin", "/comandas", "/"):
+    for tela in ("/caixa", "/cozinha", "/admin", "/comandas", "/area"):
         assert b'data-tema="claro"' in admin.get(tela).data, tela
     assert b'data-tema="claro"' in app.test_client().get("/login").data
 
@@ -799,7 +800,10 @@ def test_app_android_para_baixar_e_conectar(tmp_path):
     admin = entrar(app, "ana")
     r = admin.get("/app/instalar")
     assert r.status_code == 200 and b"<svg" in r.data and b"http://192.168.0.10:8090/app" in r.data
-    assert b"/app/instalar" in admin.get("/").data
+    # o QR code do app fica na Administração (Configurações > Conexões), junto com o IP
+    pagina_admin = admin.get("/admin").data.decode()
+    assert 'href="/app/instalar"' in pagina_admin and ">192.168.0.10</strong>" in pagina_admin
+    assert "http://192.168.0.10:8090/painel" in pagina_admin
 
 
 # --- Programa (abas) e tela do bar ---------------------------------------------
@@ -843,3 +847,33 @@ def test_login_volta_para_a_aba_pedida(ambiente, admin):
     r = c.post("/login?proximo=/area?tela%3Dbar", data={"usuario": "ana", "senha": "1234"})
     assert r.headers["Location"].endswith("/area?tela=bar")
     assert "proximo=/caixa" in app.test_client().get("/caixa").headers["Location"]
+
+
+def test_entrada_sem_pagina_de_enderecos(admin):
+    """No programa não aparece mais a página com os endereços de cada tela: "/" abre as abas."""
+    r = admin.get("/")
+    assert r.status_code == 302 and r.headers["Location"] == "/area"
+    assert b"qualquer navegador" not in admin.get("/area", follow_redirects=True).data
+
+
+def test_ip_para_digitar_na_administracao(ambiente, admin):
+    app, banco, _ = ambiente
+    banco.salvar_config({"url_base": "http://192.168.1.20:8090"})
+    assert ">192.168.1.20</strong>" in admin.get("/admin").data.decode()
+    banco.salvar_config({"url_base": "http://192.168.1.20:9000"})
+    assert ">192.168.1.20:9000</strong>" in admin.get("/admin").data.decode()
+
+
+def test_cozinha_so_com_impressora_nao_segura_o_pedido(ambiente, admin):
+    """Cozinha sem tela (só impressora): o pedido já nasce pronto e a aba Cozinha some."""
+    app, banco, _ = ambiente
+    p = _produto(admin)
+    assert 'data-aba="cozinha"' in admin.get("/area").data.decode()
+    assert admin.put("/api/config", json={"tela_cozinha": False}).status_code == 200
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
+    assert pedido["status"] == "pronto" and pedido["preparo"] == {}
+    assert 'data-aba="cozinha"' not in admin.get("/area").data.decode()
+    # tela de novo: volta a esperar a cozinha
+    admin.put("/api/config", json={"tela_cozinha": True})
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
+    assert pedido["status"] == "novo" and pedido["preparo"] == {"cozinha": "novo"}

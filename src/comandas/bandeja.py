@@ -39,9 +39,10 @@ def criar_bandeja(ip_rede: str, porta: str, pasta_dados: Path, mostrar, sair):
     menu = pystray.Menu(
         pystray.MenuItem("Abrir o Torres Comandas", lambda icon, item: mostrar(), default=True),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem(f"Computador principal — {ip_rede}:{porta}", None, enabled=False),
+        pystray.MenuItem(f"IP do computador principal: {ip_rede if str(porta) == '8090' else f'{ip_rede}:{porta}'}",
+                         None, enabled=False),
         pystray.MenuItem("Abrir pasta de dados (backup)", lambda icon, item: _abrir_pasta(pasta_dados)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair (desliga o sistema para todas as máquinas)", lambda icon, item: sair()),
     )
-    return pystray.Icon("torres_comandas", imagem_icone(), "Torres Comandas — computador principal", menu)
+    return pystray.Icon("torres_comandas", imagem_icone(), f"Torres Comandas — IP {ip_rede}", menu)

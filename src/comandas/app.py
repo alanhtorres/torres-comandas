@@ -97,7 +97,7 @@ def ja_esta_rodando(porta: int) -> bool:
 
 def subir_sistema(dados: Path, host: str, porta: int) -> Banco:
     """Liga o sistema neste PC (computador principal): banco, servidor web,
-    backup diário e a resposta às outras máquinas que procuram o sistema."""
+    e backup diário."""
     log = logging.getLogger("comandas")
     endereco = EnderecoRede(porta)
     banco = Banco(dados / "comandas.db")
@@ -120,8 +120,6 @@ def subir_sistema(dados: Path, host: str, porta: int) -> Banco:
             log.exception("O servidor web parou com erro")
 
     threading.Thread(target=servir, daemon=True, name="servidor").start()
-    descoberta.Respondedor(lambda: {"sistema": "torres-comandas", "id": banco.id_instalacao(),
-                                    "loja": banco.config()["nome_loja"], "porta": porta, "versao": __version__}).iniciar()
     for _ in range(50):  # espera o servidor atender (a janela abre logo em seguida)
         if ja_esta_rodando(porta):
             break
@@ -138,7 +136,7 @@ def main() -> None:
     parser.add_argument("--sem-bandeja", action="store_true",
                         help="só o sistema (computador principal), sem janela nem ícone — para testes e servidores")
     parser.add_argument("--modo", choices=("principal", "terminal"), help="define o papel deste computador")
-    parser.add_argument("--servidor", help="terminal: endereço do principal, ou 'auto' para procurar na rede")
+    parser.add_argument("--servidor", help="terminal: IP (ou endereço) do computador principal")
     parser.add_argument("--tela", help="tela que esta máquina abre (caixa, cozinha, bar, painel...)")
     parser.add_argument("--teste-janela", help=argparse.SUPPRESS)  # arquivo de resultado do teste automático
     parser.add_argument("--teste-login", help=argparse.SUPPRESS)
@@ -175,13 +173,8 @@ def main() -> None:
     if args.tela is not None:
         maquina.tela = args.tela
     if args.servidor:
-        info = None
-        if args.servidor == "auto":
-            achados = descoberta.procurar()
-            info = achados[0] if achados else None
-        else:
-            url = descoberta.normalizar(args.servidor)
-            info = descoberta.identificar(url) if url else None
+        url = descoberta.normalizar(args.servidor)
+        info = descoberta.identificar(url) if url else None
         if info:
             maquina.servidor, maquina.id, maquina.loja = info["url"], info["id"], info["loja"]
         else:

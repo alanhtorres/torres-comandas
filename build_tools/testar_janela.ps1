@@ -1,7 +1,7 @@
 ﻿# Testa a janela do programa (WebView2) de verdade no Windows do GitHub:
 # 1) um computador principal no ar (sem janela);
-# 2) um "terminal" que acha o principal sozinho na rede, abre a janela, entra
-#    com o usuário e mostra as telas em abas;
+# 2) um "terminal" ligado ao principal pelo IP dele na rede, abre a janela,
+#    entra com o usuário e mostra as telas em abas;
 # 3) um computador principal com janela (primeiro acesso).
 param(
     [Parameter(Mandatory = $true)][string]$Exe
@@ -42,13 +42,17 @@ try {
         -Body @{ nome = "Teste"; usuario = "teste"; senha = "teste123"; confirmar = "teste123" } | Out-Null
     Invoke-RestMethod "$base/api/config" -Method Put -WebSession $s -ContentType "application/json" -Body '{"tela_bar":true}' | Out-Null
 
-    # 2) terminal: acha o principal pela rede (--servidor auto), abre na aba do bar
+    # 2) terminal: conecta ao principal pelo IP da rede (como o cliente digita), abre na aba do bar
+    $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+        Select-Object -First 1).IPAddress
+    if (-not $ip) { $ip = "127.0.0.1" }
+    Write-Host "IP do principal: $ip"
     $env:COMANDAS_DADOS = Join-Path $raiz "terminal"
     $saida = Join-Path $raiz "terminal.json"
-    $p = Start-Process $Exe -ArgumentList "--modo", "terminal", "--servidor", "auto", "--tela", "bar",
+    $p = Start-Process $Exe -ArgumentList "--modo", "terminal", "--servidor", "$($ip):8095", "--tela", "bar",
         "--teste-janela", $saida, "--teste-login", "teste:teste123" -PassThru
     $r = Esperar-Resultado $p $saida
-    if ($r.modo -ne "terminal" -or $r.servidor -notmatch ":8095$") { throw "Terminal não achou o principal pela rede" }
+    if ($r.modo -ne "terminal" -or $r.servidor -notmatch ":8095$") { throw "Terminal não conectou ao principal pelo IP" }
     if ($r.caminho -ne "/area") { throw "Terminal não abriu as abas (abriu $($r.caminho))" }
     foreach ($aba in "caixa", "cozinha", "bar", "painel", "admin") {
         if ($r.abas -notcontains $aba) { throw "Falta a aba $aba" }
@@ -70,4 +74,4 @@ $p = Start-Process $Exe -ArgumentList "--modo", "principal", "--porta", "8094", 
 $r = Esperar-Resultado $p $saida
 if ($r.caminho -ne "/primeiro-acesso") { throw "Principal com janela não abriu o primeiro acesso (abriu $($r.caminho))" }
 if (-not $r.ponte) { throw "A página não fala com o programa (window.pywebview)" }
-Write-Host "OK: janela do programa funcionando (terminal achou o principal na rede, abas, tela do bar, principal com janela)" -ForegroundColor Green
+Write-Host "OK: janela do programa funcionando (terminal conectado pelo IP, abas, tela do bar, principal com janela)" -ForegroundColor Green

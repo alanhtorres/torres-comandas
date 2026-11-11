@@ -162,12 +162,20 @@ jobs:
       - name: Testar o instalador (instala, roda e desinstala)
         run: |
           $setup = Get-ChildItem installer\Output\TorresComandas-Setup-*.exe | Select-Object -First 1
+          $exe = "$env:ProgramFiles\Torres Comandas\TorresComandas.exe"
+          # Simula quem clicou "Cancelar" no aviso do Firewall numa instalação antiga:
+          # o Windows cria uma regra de BLOQUEIO para o programa. O instalador tem de tirá-la.
+          netsh advfirewall firewall add rule name="torrescomandas.exe" dir=in action=block program="$exe" enable=yes profile=public | Out-Null
           $p = Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=""""", "/LOG=$env:RUNNER_TEMP\setup.log" -PassThru -Wait
           if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\setup.log"; throw "Instalador saiu com código $($p.ExitCode)" }
-          $exe = "$env:ProgramFiles\Torres Comandas\TorresComandas.exe"
           if (-not (Test-Path $exe)) { throw "Programa não foi instalado em $exe" }
           $regra = netsh advfirewall firewall show rule name="Torres Comandas"
           if ($LASTEXITCODE -ne 0) { throw "Regra do firewall não foi criada" }
+          $regra = netsh advfirewall firewall show rule name="Torres Comandas (porta 8090)"
+          if ($LASTEXITCODE -ne 0) { throw "Regra do firewall da porta 8090 não foi criada" }
+          netsh advfirewall firewall show rule name="torrescomandas.exe" | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "A regra de bloqueio antiga continuou no firewall" }
+          $global:LASTEXITCODE = 0
           .\build_tools\testar_exe.ps1 -Exe $exe -Porta 8098
           $p = Start-Process "$env:ProgramFiles\Torres Comandas\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -PassThru -Wait
           Start-Sleep -Seconds 3
@@ -184,4 +192,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $setup = Get-ChildItem installer\Output\TorresComandas-Setup-*.exe | Select-Object -First 1
-          gh release create "${{ github.ref_name }}" $setup.FullName "src\comandas\app_android\torres-garcom.apk" --title "Torres Comandas ${{ github.ref_name }}" --notes "Baixe o TorresComandas-Setup e dê dois cliques para instalar. O app do garçom (torres-garcom.apk) já vem dentro do instalador: no celular, abra a página /app do sistema pelo QR code da tela inicial. Instruções completas no README."
+          gh release create "${{ github.ref_name }}" $setup.FullName "src\comandas\app_android\torres-garcom.apk" --title "Torres Comandas ${{ github.ref_name }}" --notes "Baixe o TorresComandas-Setup e dê dois cliques para instalar. O app do garçom (torres-garcom.apk) já vem dentro do instalador: no celular, abra a página do app pelo QR code em Administração > Configurações > Conexões, ou instale este .apk e digite o IP do computador principal. Instruções completas no README."

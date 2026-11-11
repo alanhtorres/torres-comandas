@@ -285,6 +285,17 @@
     }
     document.querySelectorAll("[data-tipo-impressora]").forEach((s) => s.addEventListener("change", mostrarTipoImpressora));
 
+    // Cozinha ou bar sem tela e sem impressora: avisa (ninguém ficaria sabendo do pedido).
+    function avisarSetores() {
+      for (const aviso of document.querySelectorAll("[data-aviso-setor]")) {
+        const setor = aviso.dataset.avisoSetor;
+        const tela = document.querySelector(`[data-setor-tela="${setor}"]`);
+        const impressora = document.querySelector(`[name="impressora_${setor}_ativa"]`);
+        aviso.hidden = !tela || !impressora || tela.checked || impressora.checked;
+      }
+    }
+    document.querySelectorAll("[data-setor-tela], [name$='_ativa']").forEach((c) => c.addEventListener("change", avisarSetores));
+
     async function carregarConfig() {
       const { config, url_base_detectada } = await api("GET", "/api/config");
       await carregarImpressorasUsb(config);
@@ -295,6 +306,7 @@
         else campo.value = valor === undefined || valor === null ? "" : valor;
       }
       mostrarTipoImpressora();
+      avisarSetores();
       $("cfg-url_base").placeholder = url_base_detectada ? "Detectado: " + url_base_detectada : "http://192.168.0.10:8090";
       }
     carregadores.config = () => carregarConfig().catch((e) => aviso(e.message, "erro"));

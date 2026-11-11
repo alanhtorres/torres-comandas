@@ -44,27 +44,10 @@ def test_identificar(sistema):
     assert descoberta.identificar("http://127.0.0.1:1") is None
 
 
-def test_principal_responde_quem_procura_na_rede(sistema, monkeypatch):
-    banco, url, porta = sistema
-    porta_udp = _porta_livre()
-    monkeypatch.setattr(descoberta, "_destinos_broadcast", lambda: ["127.0.0.1"])
-    resp = descoberta.Respondedor(lambda: {"sistema": "torres-comandas", "id": banco.id_instalacao(),
-                                           "loja": "Lanchonete da Ana", "porta": porta, "versao": "x"}, porta=porta_udp)
-    assert resp.iniciar()
-    try:
-        achados = descoberta.procurar(tempo=0.8, porta=porta_udp, varrer=False)
-    finally:
-        resp.parar()
-    assert achados == [{"url": url, "id": banco.id_instalacao(), "loja": "Lanchonete da Ana", "versao": "x"}]
-
-
-def test_sem_resposta_ao_broadcast_varre_a_faixa(sistema, monkeypatch):
-    banco, url, porta = sistema
-    monkeypatch.setattr(descoberta, "_procurar_udp", lambda tempo, porta: {})
-    monkeypatch.setattr(descoberta, "ips_locais", lambda: ["127.0.0.5"])
-    achados = descoberta.procurar(portas_varredura=(porta,))
-    assert [a["id"] for a in achados] == [banco.id_instalacao()]
-    assert achados[0]["url"] == f"http://127.0.0.1:{porta}"
+def test_nao_tem_mais_busca_automatica():
+    """A conexão é só pelo IP digitado (a busca na rede não funcionava em todas as lojas)."""
+    for nome in ("procurar", "Respondedor", "_varrer_faixa", "PORTA_DESCOBERTA"):
+        assert not hasattr(descoberta, nome)
 
 
 def test_maquina_salva_e_instalacao_antiga_vira_principal(tmp_path):
@@ -82,20 +65,37 @@ def test_maquina_salva_e_instalacao_antiga_vira_principal(tmp_path):
     assert lida.modo == "principal" and lida.tela == ""  # valores inválidos ignorados
 
 
-def test_terminal_reencontra_o_principal_que_mudou_de_ip(sistema, tmp_path, monkeypatch):
+def test_terminal_conecta_pelo_ip_salvo(sistema, tmp_path):
     banco, url, porta = sistema
-    m = Maquina(modo="terminal", servidor="http://127.0.0.1:1", id=banco.id_instalacao())
-    p = Programa(tmp_path, m, subir_servidor=lambda: "")
-    monkeypatch.setattr(descoberta, "procurar", lambda **kw: [{"url": url, "id": banco.id_instalacao(), "loja": "L", "versao": ""},
-                                                              {"url": "http://outro", "id": "outro", "loja": "", "versao": ""}])
-    assert p.url_inicial() == url + "/area"
-    assert Maquina.carregar(tmp_path).servidor == url  # guardou o endereço novo
-    # outro sistema na rede não serve
-    m2 = Maquina(modo="terminal", servidor="http://127.0.0.1:1", id="sumiu")
+    m = Maquina(modo="terminal", servidor=url, id=banco.id_instalacao())
+    assert Programa(tmp_path, m, subir_servidor=lambda: "").url_inicial() == url + "/area"
+    # IP que não responde: abre a tela de reconexão (None), sem procurar na rede
+    m2 = Maquina(modo="terminal", servidor="http://127.0.0.1:1", id=banco.id_instalacao())
     assert Programa(tmp_path, m2, subir_servidor=lambda: "").url_inicial() is None
 
 
-def test_assistente_recebe_o_estado():
-    html = Programa._html_assistente("reconectar", 'Não encontrei o principal "X" </script>')
+def test_api_conectar_pelo_ip_e_terminal_nao_vira_principal(sistema, tmp_path):
+    from comandas.programa import Api
+    banco, url, porta = sistema
+    p = Programa(tmp_path, Maquina(), subir_servidor=lambda: "")
+    api = Api(p)
+    for metodo in ("procurar", "procurar_rapido", "reconfigurar"):
+        assert not hasattr(api, metodo)
+    r = api.conectar("127.0.0.1:1")
+    assert not r["ok"] and "não respondeu em 127.0.0.1:1" in r["erro"]
+    assert not api.conectar("")["ok"]
+    assert api.conectar(f"127.0.0.1:{porta}") == {"ok": True}
+    salvo = Maquina.carregar(tmp_path)
+    assert salvo.modo == "terminal" and salvo.servidor == url and salvo.id == banco.id_instalacao()
+    # Já ligado a um principal: não vira principal pelas telas
+    assert api.ser_principal()["ok"] is False
+    assert Maquina.carregar(tmp_path).modo == "terminal"
+
+
+def test_assistente_recebe_o_estado(tmp_path):
+    p = Programa(tmp_path, Maquina(modo="terminal", servidor="http://192.168.0.10:8090"), subir_servidor=lambda: "")
+    html = p._html_assistente("reconectar", 'Não encontrei o principal "X" </script>')
     assert '"modo": "reconectar"' in html and "/*ESTADO*/" not in html
+    assert '"ip": "192.168.0.10"' in html
     assert "</script>\"" not in html  # o texto não pode fechar o <script> da página
+    assert "Procurar" not in html and "procurar(" not in html

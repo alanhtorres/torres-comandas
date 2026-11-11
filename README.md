@@ -7,8 +7,8 @@ permissões e histórico de tudo o que cada um faz.
 
 É um **programa de Windows**: instala-se o mesmo programa em cada computador da loja
 (caixa, cozinha, bar, TV do painel). Um deles é o **computador principal** (guarda os
-dados); os outros se conectam nele sozinhos pela rede da loja — ninguém digita
-endereço. Cada computador mostra as telas em **abas** numa janela própria.
+dados); os outros se conectam nele pelo **IP** dele na rede da loja (digitado uma
+vez só, na instalação). Cada computador mostra as telas em **abas** numa janela própria.
 **Não precisa de internet** (ver "Funcionamento sem internet").
 
 ## Instalando nos computadores da loja
@@ -20,10 +20,14 @@ endereço. Cada computador mostra as telas em **abas** numa janela própria.
    enquanto a loja funciona; fechar a janela não desliga o sistema (fica o ícone
    laranja perto do relógio — "Sair" nesse ícone desliga para todos).
 3. **Nos outros computadores** (cozinha, bar, segundo caixa, TV), escolha
-   **"Conectar ao computador principal"**: o programa procura na rede e mostra o
-   principal encontrado; é só clicar. Se o IP do principal mudar, eles o reencontram
-   sozinhos.
-4. Em cada computador, **🖥️ Esta máquina** (no topo) escolhe a tela que ele abre ao
+   **"Conectar ao computador principal"** e digite o **IP do principal** (aparece no
+   principal em **Administração → Configurações → Conexões** e no ícone laranja perto
+   do relógio). **Reserve esse IP no roteador** ("IP fixo"/"reserva DHCP"): se ele
+   mudar, as outras máquinas mostram a tela de reconexão para digitar o novo.
+   O papel de cada computador (principal ou conectado) é escolhido só na instalação;
+   para recomeçar do zero, feche o programa ("Sair" no ícone) e apague a pasta
+   `%LOCALAPPDATA%\TorresComandas`.
+4. Em cada computador, **🖥️ Esta máquina** (no topo) escolhe só a tela que ele abre ao
    ligar (ex.: a TV abre o Painel, a cozinha abre a Cozinha) e se abre em tela cheia.
    Na TV do painel, **F2** volta para as abas; **F11** liga/desliga a tela cheia.
 
@@ -37,16 +41,16 @@ se faltar, o instalador o instala (precisa de internet só nesse momento). Celul
 
 ## Telas
 
-No programa, essas telas aparecem como abas; os endereços servem para celulares,
-tablets e navegadores.
+No programa, essas telas aparecem como abas (o endereço `/` também abre as abas).
+O único endereço que se usa no dia a dia é o do **painel da TV** (navegador da TV),
+mostrado em Administração → Configurações → Conexões.
 
 | Tela | Endereço | Quem acessa |
 |---|---|---|
-| Início | `/` | Qualquer usuário logado (mostra só os atalhos que ele pode usar) |
 | Caixa | `/caixa` | Lançar pedidos, chamar no painel, contas a receber, pagamentos, abrir/fechar caixa |
 | Comandas | `/comandas` | Entrada/recepção: cadastrar o cliente, abrir e fechar comandas, aniversariantes do dia |
 | Garçom | `/garcom` | Celular/tablet: pedidos na mesa, alerta quando o cliente chama pelo QR code, pedidos prontos para entregar, contas das mesas |
-| Cozinha | `/cozinha` | Só o que precisa de preparo, com tempo de espera (amarelo > 10 min, vermelho > 20 min) |
+| Cozinha | `/cozinha` | Só o que precisa de preparo, com tempo de espera (amarelo > 10 min, vermelho > 20 min) (quando a tela da cozinha está ligada) |
 | Bar | `/bar` | Igual à cozinha, com os produtos do bar (quando a tela do bar está ligada) |
 | Painel (TV) | `/painel` | Público. Pedidos prontos + histórico na lateral; fotos e vídeos dos produtos no resto da tela |
 | Cliente (QR code) | `/m/<código-da-mesa>` | Público. Cardápio no celular, pedido direto para a cozinha, chamar garçom, pedir a conta |
@@ -114,14 +118,16 @@ bolso, a tela apagada ou outro app aberto** (mesa chamando, pedindo a conta,
 pedido pronto para levar). A notificação do chamado tem o botão **✓ Atendi**.
 
 Instalação (sem Play Store e sem internet — o celular baixa direto do PC):
-1. No PC, na tela inicial do sistema, abra **📱 App do garçom** e aponte a câmera
-   do celular para o QR code (o celular precisa estar no Wi-Fi da loja).
+1. No PC, em **Administração → Configurações → Conexões**, clique em **QR code para
+   baixar** e aponte a câmera do celular (o celular precisa estar no Wi-Fi da loja).
 2. Toque em **Baixar o app**, instale (permita "instalar desta fonte") e toque em
-   **Abrir no app**: ele já abre ligado ao PC.
+   **Abrir no app**: ele já abre ligado ao PC. Ou abra o app e **digite o IP** do
+   computador principal (o mesmo das Conexões).
 3. Entre com o usuário do garçom e permita as notificações.
 
-Também dá para abrir o app e tocar em **Procurar o sistema na rede**. Se o IP do PC
-mudar, o app reencontra o sistema sozinho. Enquanto o turno está ativo aparece
+Se não conectar, o app explica o motivo (IP sem resposta, celular fora do Wi-Fi da
+loja, firewall/antivírus do principal). Se o IP do PC mudar, toque em **Trocar o IP
+do computador principal**. Enquanto o turno está ativo aparece
 um aviso fixo na barra do celular; ao final do dia, **⚙️ App → Encerrar turno**.
 Em alguns celulares (Xiaomi, Samsung) vale tocar em **⚙️ App → Não deixar o
 Android pausar os avisos**. Quando o sistema é atualizado, o app avisa que há
@@ -201,10 +207,11 @@ Pedido misto é dividido: o cupom da cozinha só tem os lanches, o do bar só as
 bebidas. Pedido sem nada para a cozinha (só bar ou só itens prontos) já nasce
 "pronto"; a tela da cozinha mostra só o que ela precisa preparar.
 
-**Tela do bar** (Configurações → "Usar a tela do bar"): o bar ganha uma tela igual à
-da cozinha, no lugar da impressora ou junto com ela. Cozinha e bar marcam "pronto"
-cada um na sua parte, e o pedido só fica pronto (e vai para o painel) quando os dois
-terminarem. Sem a tela do bar, os itens do bar só imprimem e não seguram o pedido.
+**Como saem os pedidos** (Configurações → "Cozinha e bar: como saem os pedidos"): para
+a cozinha e para o bar, o administrador escolhe **tela**, **impressora** ou os dois.
+Com tela, cada um marca "pronto" na sua parte e o pedido só fica pronto (e vai para o
+painel) quando todos terminarem. Sem tela, aquele lugar só imprime e não segura o
+pedido (e a aba dele some). Sem tela e sem impressora, a configuração avisa.
 
 ## Histórico (auditoria)
 
@@ -305,8 +312,11 @@ Os vídeos do painel sempre tocam sem som.
 Ver "Instalando nos computadores da loja" no começo. Não precisa instalar Python
 nem nada mais: vem tudo dentro.
 
-O instalador libera o programa no Firewall do Windows (inclusive a busca entre as
-máquinas, porta UDP 8091) e, por padrão, faz ele **abrir junto com o Windows**.
+O instalador libera o programa e a porta 8090 no Firewall do Windows (e apaga regras
+de bloqueio antigas que o Windows cria quando alguém clica "Cancelar" no aviso do
+Firewall) e, por padrão, faz ele **abrir junto com o Windows**. Antivírus com
+firewall próprio (Avast, Kaspersky, Norton...) podem precisar liberar o
+Torres Comandas manualmente.
 **Atualizando da 2.x:** o computador que já tinha os dados continua sendo o principal,
 sem perguntar nada; nos outros, instale e escolha "Conectar ao computador principal".
 Navegadores e celulares continuam funcionando pelos endereços de antes. Para atualizar, rode o instalador da versão nova
@@ -364,7 +374,7 @@ src/comandas/
   app.py                    inicialização (principal ou terminal), backup diário
   programa.py               janela do programa (pywebview/WebView2), primeira vez, abas
   maquina.py                papel deste computador e tela que ele abre (maquina.json)
-  descoberta.py             as máquinas se acham na rede (UDP 8091 + varredura)
+  descoberta.py             IP deste PC na rede e conexão ao principal pelo IP
   bandeja.py                ícone do computador principal perto do relógio
   banco.py                  SQLite + regras: usuários/permissões, auditoria, pedidos, caixa, relatórios
   servidor.py               rotas Flask (telas + API) com checagem de permissão

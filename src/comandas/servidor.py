@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import segno
 from flask import (
@@ -271,7 +271,14 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @app.get("/")
     @exigir()
     def inicio():
-        return render_template("inicio.html", url_base=url_base(), permissoes_admin=PERMISSOES_ADMIN)
+        # Uma entrada só: as telas em abas (no programa e no navegador).
+        return redirect("/area")
+
+    def ip_para_digitar() -> str:
+        """O que se digita nas outras máquinas e no app: o IP (e a porta, se não for a padrão)."""
+        partes = urlsplit(url_base())
+        host, porta = partes.hostname or "", partes.port or 80
+        return host if porta == 8090 else f"{host}:{porta}"
 
     def abas_do_usuario():
         """Telas que este usuário pode abrir, na ordem das abas do programa."""
@@ -284,7 +291,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         if pode("garcom"):
             abas.append(("garcom", "🛎️", "Garçom"))
         if pode("cozinha"):
-            abas.append(("cozinha", "👨‍🍳", "Cozinha"))
+            if cfg["tela_cozinha"]:
+                abas.append(("cozinha", "👨‍🍳", "Cozinha"))
             if cfg["tela_bar"]:
                 abas.append(("bar", "🍹", "Bar"))
         abas.append(("painel", "📺", "Painel (TV)"))
@@ -329,7 +337,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @app.get("/admin")
     @exigir(*PERMISSOES_ADMIN)
     def tela_admin():
-        return render_template("admin.html")
+        return render_template("admin.html", url_base=url_base(), ip_principal=ip_para_digitar(),
+                               app_disponivel=info_app() is not None)
 
     @app.get("/painel")
     def tela_painel():

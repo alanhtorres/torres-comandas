@@ -50,17 +50,25 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
 [Run]
-; Libera o programa no Firewall do Windows: sem isso as outras telas da loja
-; (caixa, cozinha, TV, celulares no QR code) não conseguem se conectar.
-; Remove antes pra não acumular regras repetidas ao atualizar por cima.
+; Libera o programa no Firewall do Windows: sem isso as outras máquinas da
+; loja e os celulares dos garçons não conseguem se conectar.
+; 1) Apaga TODAS as regras deste programa, inclusive as de BLOQUEIO que o
+;    Windows cria sozinho quando alguém clica em "Cancelar" no aviso do
+;    Firewall (bloqueio vale mais que liberação). Também evita regras repetidas.
+; 2) Libera o programa e a porta do sistema (8090), em qualquer tipo de rede
+;    (o Windows costuma marcar a rede da loja como "Pública").
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=all program=""{app}\{#MyAppExeName}"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Torres Comandas"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Torres Comandas (porta 8090)"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Torres Comandas"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any"; Flags: runhidden; StatusMsg: "Liberando o programa no Firewall do Windows..."
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Torres Comandas (porta 8090)"" dir=in action=allow protocol=TCP localport=8090 enable=yes profile=any"; Flags: runhidden
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; Flags: waituntilterminated; StatusMsg: "Instalando o componente da janela do programa (WebView2)..."; Check: FaltaWebView2
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName} agora"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; RunOnceId: "FecharApp"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Torres Comandas"""; Flags: runhidden; RunOnceId: "RemoverFirewall"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Torres Comandas (porta 8090)"""; Flags: runhidden; RunOnceId: "RemoverFirewallPorta"
 
 [Code]
 // O WebView2 (motor do Edge) mostra a janela do programa. Já vem no Windows 11

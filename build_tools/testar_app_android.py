@@ -231,12 +231,33 @@ time.sleep(3)
 assert pagina.js("window.__marcador") == "sem-recarregar", "a página recarregou ao reabrir o app"
 assert pagina.js("location.pathname") == "/garcom"
 
-passo("Procurar o sistema na rede (sem digitar endereço)")
+def texto_na_tela(trecho):
+    adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
+    return trecho.lower() in adb("shell", "cat", "/sdcard/ui.xml").lower()
+
+
+def digitar_ip(ip):
+    """Apaga o campo do IP e digita outro."""
+    esperar("campo do IP", lambda: tocar_texto("10.0.2") or tocar_texto("192.168"), 10)
+    adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+    for _ in range(25):
+        adb("shell", "input", "keyevent", "KEYCODE_DEL")
+    adb("shell", "input", "text", ip)
+
+
+passo("Trocar o IP: IP errado explica o problema; IP certo conecta")
 adb("shell", "am", "start", "-n", f"{PACOTE}/.ConectarActivity")
 time.sleep(2)
-foto("7-conectar")
-esperar("botão Procurar", lambda: tocar_texto("Procurar o sistema"), 10)
-esperar("encontrou e voltou para a tela do garçom",
+assert texto_na_tela("IP do computador principal"), "tela de conexão sem o campo do IP"
+assert not texto_na_tela("Procurar"), "a tela de conexão ainda tem a busca na rede"
+assert texto_na_tela("10.0.2.2"), "o IP salvo não veio preenchido"
+digitar_ip("10.0.2.77")
+esperar("botão Conectar", lambda: tocar_texto("Conectar"), 10)
+esperar("explicação do IP que não respondeu", lambda: texto_na_tela("respondeu no IP 10.0.2.77"), 30)
+foto("7-ip-errado")
+digitar_ip("10.0.2.2")
+esperar("botão Conectar", lambda: tocar_texto("Conectar"), 10)
+esperar("conectou e voltou para a tela do garçom",
         lambda: f"{PACOTE}/.MainActivity" in adb("shell", "dumpsys", "activity", "activities").split("ResumedActivity")[1][:300], 60)
 esperar("página do garçom de novo", lambda: pagina.js("location.pathname") == "/garcom", 30)
 foto("8-reconectado")

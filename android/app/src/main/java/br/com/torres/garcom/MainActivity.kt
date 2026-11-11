@@ -42,7 +42,6 @@ class MainActivity : Activity() {
     private lateinit var semConexao: LinearLayout
     private lateinit var textoSemConexao: android.widget.TextView
     private val principal = Handler(Looper.getMainLooper())
-    private var falhasSeguidas = 0
     private var avisouAtualizacao = false
 
     private val servidor get() = Preferencias.servidor(this)
@@ -169,7 +168,7 @@ class MainActivity : Activity() {
             addView(Telas.texto(c, "📡 Sem conexão com o sistema", 22f, negrito = true))
             addView(textoSemConexao)
             addView(Telas.botao(c, "Tentar de novo", Telas.VERDE) { tentarDeNovo() }.also { Telas.espacamento(c, it, 16) })
-            addView(Telas.botao(c, "Procurar o sistema na rede", Telas.PAINEL) {
+            addView(Telas.botao(c, "Trocar o IP do computador principal", Telas.PAINEL) {
                 startActivity(Intent(c, ConectarActivity::class.java))
             }.also { Telas.espacamento(c, it) })
         }
@@ -177,8 +176,8 @@ class MainActivity : Activity() {
     }
 
     private fun mostrarSemConexao() {
-        textoSemConexao.text = "Confira se o celular está no Wi-Fi da loja e se o PC com o sistema está ligado.\n" +
-            "Tentando de novo sozinho... (${servidor?.removePrefix("http://")})"
+        textoSemConexao.text = "Confira se o celular está no Wi-Fi da loja e se o computador principal está ligado " +
+            "com o Torres Comandas aberto.\nTentando de novo sozinho... (IP ${Rede.ipParaMostrar(servidor)})"
         semConexao.visibility = View.VISIBLE
         principal.removeCallbacksAndMessages(null)
         principal.postDelayed({ tentarDeNovo() }, 5000)
@@ -189,24 +188,15 @@ class MainActivity : Activity() {
         semConexao.visibility = View.GONE
     }
 
-    /**
-     * Testa o endereço salvo; depois de algumas falhas, procura o mesmo
-     * sistema na rede (o IP do PC pode ter mudado) e reconecta sozinho.
-     */
+    /** Testa o IP salvo de novo (o app não procura sozinho: o IP do principal é fixo). */
     private fun tentarDeNovo() {
         val atual = servidor ?: return
         principal.removeCallbacksAndMessages(null)
         Thread {
-            var s = Rede.identificar(atual)
-            if (s == null && ++falhasSeguidas % 3 == 0) {
-                val id = Preferencias.idSistema(this)
-                s = Rede.procurar(linkedSetOf(Rede.PORTA_PADRAO, Rede.portaDe(atual))).firstOrNull { it.id == id }
-                if (s != null) Preferencias.salvar(this, s)
-            }
+            val s = Rede.identificar(atual)
             runOnUiThread {
                 if (isFinishing) return@runOnUiThread
                 if (s != null) {
-                    falhasSeguidas = 0
                     carregar(null)
                 } else {
                     mostrarSemConexao()
@@ -266,7 +256,7 @@ class MainActivity : Activity() {
             opcoes += "🔋 Não deixar o Android pausar os avisos" to { pedirSemEconomiaBateria() }
         }
         opcoes += "🔄 Recarregar a página" to { carregar(null) }
-        opcoes += "🔗 Trocar de sistema (outro PC/loja)" to { startActivity(Intent(this, ConectarActivity::class.java)) }
+        opcoes += "🔗 Trocar o IP do computador principal" to { startActivity(Intent(this, ConectarActivity::class.java)) }
         AlertDialog.Builder(this)
             .setTitle("Torres Garçom ${versaoInstalada().second}")
             .setMessage("Ligado a: ${Preferencias.loja(this)} (${servidor?.removePrefix("http://")})\n" +
