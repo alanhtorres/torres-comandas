@@ -146,8 +146,9 @@ def _valor(c: Cupom, rotulo: str, centavos: int, negrito: bool = False) -> None:
 
 
 def cupom_conta(titulo: str, pedidos: list, nome_loja: str, taxa_servico_percentual: int = 0,
-                colunas: int = 48, codificacao: str = "cp850") -> bytes:
-    """Conferência de conta (pré-conta) para o cliente — não é documento fiscal."""
+                colunas: int = 48, codificacao: str = "cp850", abatido: Optional[dict] = None) -> bytes:
+    """Conferência de conta (pré-conta) para o cliente — não é documento fiscal.
+    "abatido" = {"subtotal", "pago"}: partes da conta já pagas (conta dividida)."""
     c = Cupom(colunas, codificacao)
     c.cmd(ALINHAR_CENTRO).linha(nome_loja).cmd(NEGRITO_ON).linha("CONFERENCIA DE CONTA").cmd(NEGRITO_OFF)
     c.linha(titulo).linha(datetime.now().strftime("%d/%m/%Y %H:%M")).cmd(ALINHAR_ESQ).separador()
@@ -159,12 +160,25 @@ def cupom_conta(titulo: str, pedidos: list, nome_loja: str, taxa_servico_percent
             _valor(c, f"{item['quantidade']}x {item['nome']}"[: c.colunas - 13], valor)
     c.separador()
     _valor(c, "Subtotal", subtotal)
+    rotulo_total = "Total"
+    if abatido and abatido.get("subtotal"):
+        ajuste = abatido["pago"] - abatido["subtotal"]
+        if ajuste > 0:
+            _valor(c, "Taxa de servico (ja cobrada)", ajuste)
+            taxa_servico_percentual = 0
+        elif ajuste < 0:
+            _valor(c, "Desconto (ja dado)", -ajuste)
+        _valor(c, "Ja pago", abatido["pago"])
+        subtotal = max(0, subtotal - abatido["subtotal"])
+        rotulo_total = "Falta pagar"
     if taxa_servico_percentual:
         taxa = round(subtotal * taxa_servico_percentual / 100)
+        if rotulo_total != "Total":
+            _valor(c, rotulo_total, subtotal)
         _valor(c, f"Taxa de servico ({taxa_servico_percentual}%) opcional", taxa)
         _valor(c, "Total com taxa", subtotal + taxa, negrito=True)
     else:
-        _valor(c, "Total", subtotal, negrito=True)
+        _valor(c, rotulo_total, subtotal, negrito=True)
     c.separador().cmd(ALINHAR_CENTRO).linha("Nao e documento fiscal")
     return c.bytes()
 

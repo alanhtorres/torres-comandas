@@ -133,9 +133,32 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 
 .pagamento-resumo { background: var(--fundo); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
 .pagamento-resumo ul { margin: 0 0 6px; padding-left: 18px; color: var(--texto-2); font-size: 0.9rem; max-height: 140px; overflow-y: auto; }
-.grade-formas { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin-top: 8px; }
-.forma { display: flex; flex-direction: column; gap: 4px; background: var(--fundo); border-radius: 8px; padding: 8px; }
-.forma span { font-size: 0.85rem; color: var(--texto-2); display: flex; justify-content: space-between; align-items: center; }
-.forma span button { padding: 2px 8px; font-size: 0.75rem; }
-.forma input { font-size: 1.1rem; }
-.saldo-pagamento { display: flex; justify-content: space-between; font-size: 1.15rem; font-weight: 700; margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--fundo); }
+/* Janela de pagamento: um valor, um toque na forma de pagamento */
+.pagamento-resumo .itens-conta { margin-top: 6px; color: var(--texto-2); font-size: 0.9rem; }
+.pagamento-resumo .itens-conta summary { cursor: pointer; }
+.ajustes { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.ajustes .ajuste { background: transparent; border: 1px solid var(--borda); color: var(--texto-2); padding: 6px 12px; font-size: 0.9rem; }
+.ajustes .ajuste.ligado { border-color: var(--destaque); color: var(--destaque); font-weight: 700; }
+.ajuste-aberto { background: var(--fundo); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.ajuste-aberto input { font-size: 1.1rem; }
+.ajuste-aberto.dividir { display: flex; align-items: center; gap: 10px; }
+.ajuste-aberto.dividir[hidden] { display: none; }
+.ajuste-aberto.dividir button { width: 42px; height: 42px; font-size: 1.3rem; padding: 0; }
+.ajuste-aberto .n-pessoas { font-size: 1.4rem; min-width: 2ch; text-align: center; }
+.valor-agora { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px;
+  background: var(--fundo); border-radius: 10px; padding: 12px 14px; margin: 4px 0 12px; }
+.valor-agora span { font-size: 1.05rem; color: var(--texto-2); }
+.valor-agora strong { font-size: 2rem; }
+.valor-agora small { flex-basis: 100%; color: var(--texto-2); }
+.botoes-forma { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 6px; }
+.botao-forma { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 8px; font-size: 1rem;
+  background: var(--fundo); border: 2px solid var(--borda); }
+.botao-forma .icone { font-size: 1.6rem; }
+.botao-forma.escolhida { border-color: var(--verde); background: color-mix(in srgb, var(--verde) 18%, var(--fundo)); font-weight: 700; }
+.caixa-dinheiro { background: var(--fundo); border-radius: 8px; padding: 8px 10px; margin-top: 10px; }
+.caixa-dinheiro input { font-size: 1.2rem; }
+.linha-troco { display: flex; justify-content: space-between; font-size: 1.2rem; font-weight: 700; margin-top: 8px; }
+.pagamento .dica { color: var(--texto-2); font-size: 0.82rem; margin: 10px 0 0; }
+.conta .ja-pago { color: var(--texto-2); font-size: 0.9rem; margin-top: 2px; }
+.conta ul.abatimentos { list-style: none; padding-left: 0; color: #86efac; }
+:root[data-tema="claro"] .conta ul.abatimentos { color: #15803d; }

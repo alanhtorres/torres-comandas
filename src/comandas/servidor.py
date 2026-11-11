@@ -655,7 +655,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             raise ErroNegocio("Nada para imprimir.")
         titulo = str(dados.get("titulo") or "")[:60]
         taxa = banco.config()["taxa_servico_percentual"]
-        _imprimir("caixa", lambda loja, col, cod: impressora.cupom_conta(titulo, pedidos, loja, taxa, col, cod))
+        abatido = banco.abatido([p["id"] for p in pedidos if not p["pago"]])
+        _imprimir("caixa", lambda loja, col, cod: impressora.cupom_conta(titulo, pedidos, loja, taxa, col, cod, abatido))
         banco.registrar_acao(ator(), "Imprimiu conferência de conta", titulo)
         return jsonify({"ok": True})
 
@@ -705,7 +706,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def api_receber():
         dados = request.get_json(silent=True) or {}
         rec = banco.receber(dados.get("pedido_ids"), dados.get("formas"), ator(),
-                            desconto=dados.get("desconto", 0), acrescimo=dados.get("acrescimo", 0))
+                            desconto=dados.get("desconto", 0), acrescimo=dados.get("acrescimo", 0),
+                            valor=dados.get("valor"))
         return jsonify({"ok": True, "recebimento": rec})
 
     @app.post("/api/recebimentos/<int:rid>/estornar")

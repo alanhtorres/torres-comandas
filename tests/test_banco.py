@@ -251,7 +251,8 @@ def test_receber_conta_da_mesa_dividida_com_troco_e_desconto(banco, ana):
     a = _pedido(banco, p, mesa="4")
     b = _pedido(banco, p, qtd=2, mesa="4")
     contas = banco.contas_abertas()
-    assert contas == [{"chave": "mesa:4", "titulo": "Mesa 4", "pedidos": contas[0]["pedidos"], "total": 9000}]
+    assert contas == [{"chave": "mesa:4", "titulo": "Mesa 4", "pedidos": contas[0]["pedidos"], "total": 9000,
+                       "abatido": 0, "ja_pago": 0, "abatimentos": [], "falta": 9000}]
 
     banco.abrir_caixa(5000, ana)
     # total 9000 - 500 desconto + 900 taxa = 9400; pix 4000 + dinheiro entregue 6000 => troco 600
@@ -263,6 +264,61 @@ def test_receber_conta_da_mesa_dividida_com_troco_e_desconto(banco, ana):
     assert banco.obter_pedido(a["id"])["pago"] is True
     with pytest.raises(ErroNegocio, match="já foi pago"):
         banco.receber([a["id"]], [{"forma": "pix", "valor": 3000}], ana)
+
+
+def test_conta_dividida_em_partes_abatidas_e_fechada_no_ultimo_pagamento(banco, ana):
+    maria = _cliente(banco)
+    p = _produto(banco, preco=5000)
+    k = banco.abrir_comanda(maria["id"], por=ana)
+    a = banco.criar_pedido([{"produto_id": p["id"], "quantidade": 2}], comanda_id=k["id"], por=ana)  # 100,00
+    banco.abrir_caixa(0, ana)
+    # taxa de 10% na conta inteira, dividida por 2: 55,00 cada (a taxa entra no 1º pagamento)
+    r1 = banco.receber([a["id"]], [{"forma": "dinheiro", "valor": 6000}], ana, acrescimo=1000, valor=5500)
+    assert r1["parcial"] and r1["total"] == 5500 and r1["troco"] == 500 and r1["subtotal"] == 4500
+    assert r1["descricao"].startswith("Valor abatido — Comanda 1")
+    conta = banco.contas_abertas()[0]
+    assert (conta["abatido"], conta["ja_pago"], conta["falta"]) == (4500, 5500, 5500)
+    assert banco.obter_comanda(k["id"])["aberta"] and banco.obter_comanda(k["id"])["a_receber"] == 5500
+    assert not banco.obter_pedido(a["id"])["pago"]
+    # pedido novo na mesma comanda entra na conta
+    b = banco.criar_pedido([{"produto_id": p["id"]}], comanda_id=k["id"], por=ana)  # +50,00
+    assert banco.contas_abertas()[0]["falta"] == 10500
+    with pytest.raises(ErroNegocio, match="passa do que falta"):
+        banco.receber([a["id"], b["id"]], [{"forma": "pix", "valor": 20000}], ana, valor=20000)
+    r2 = banco.receber([a["id"], b["id"]], [{"forma": "credito", "valor": 10500}], ana)
+    assert not r2["parcial"] and r2["total"] == 10500 and r2["subtotal"] == 10500
+    assert banco.obter_pedido(a["id"])["pago"] and banco.contas_abertas() == []
+    assert banco.obter_comanda(k["id"])["aberta"] is False
+    resumo = banco.resumo_sessao(banco.sessao_aberta()["id"])
+    assert resumo["total_vendas"] == 16000 and resumo["qtd_vendas"] == 1
+    # o valor abatido só pode ser estornado depois do pagamento final
+    with pytest.raises(ErroNegocio, match="Estorne primeiro o pagamento final"):
+        banco.estornar_recebimento(r1["id"], "errado", ana)
+    banco.estornar_recebimento(r2["id"], "errado", ana)
+    assert banco.contas_abertas()[0]["falta"] == 10500     # o abatido continua valendo
+    banco.estornar_recebimento(r1["id"], "errado", ana)
+    assert banco.contas_abertas()[0]["falta"] == 15000
+    assert "Recebeu valor abatido" in _acoes(banco)
+
+
+def test_abater_valor_valida(banco, ana):
+    pedido = _pedido(banco, _produto(banco, preco=1000))
+    banco.abrir_caixa(0, ana)
+    with pytest.raises(ErroNegocio, match="Falta receber"):
+        banco.receber([pedido["id"]], [{"forma": "pix", "valor": 300}], ana, valor=400)
+    with pytest.raises(ErroNegocio, match="taxa de serviço"):
+        banco.receber([pedido["id"]], [{"forma": "pix", "valor": 100}], ana, acrescimo=100, valor=100)
+    banco.receber([pedido["id"]], [{"forma": "pix", "valor": 400}], ana, valor=400)
+    # depois de abater 4,00, faltam 6,00
+    with pytest.raises(ErroNegocio, match="Falta receber R\\$ 5,00"):
+        banco.receber([pedido["id"]], [{"forma": "pix", "valor": 100}], ana)
+    assert banco.receber([pedido["id"]], [{"forma": "pix", "valor": 600}], ana)["total"] == 600
+    # abatido em dois pedidos: não dá para pagar só um deles
+    p = _produto(banco, "Suco", preco=1000)
+    x, y = _pedido(banco, p, mesa="2"), _pedido(banco, p, mesa="2")
+    banco.receber([x["id"], y["id"]], [{"forma": "pix", "valor": 500}], ana, valor=500)
+    with pytest.raises(ErroNegocio, match="receba a conta inteira"):
+        banco.receber([x["id"]], [{"forma": "pix", "valor": 500}], ana)
 
 
 def test_receber_validacoes(banco, ana):

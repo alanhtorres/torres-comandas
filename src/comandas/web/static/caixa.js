@@ -290,85 +290,207 @@
       return;
     }
     $("aba-contas").replaceChildren(...estado.contas.map((c) => el("div", { class: "conta" },
-      el("div", { class: "cabeca" }, el("h3", {}, c.titulo), el("span", { class: "espaco" }), el("strong", {}, moeda(c.total))),
+      el("div", { class: "cabeca" }, el("h3", {}, c.titulo), el("span", { class: "espaco" }),
+        el("strong", {}, moeda(c.abatido ? c.falta : c.total))),
+      c.abatido ? el("div", { class: "ja-pago" }, `Conta ${moeda(c.total)} · já pago ${moeda(c.ja_pago)} · falta ${moeda(c.falta)}`) : null,
       el("ul", {}, c.pedidos.map((p) => el("li", {},
         `Pedido ${p.codigo} (${hora(p.criado_em)}): ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))),
+      c.abatimentos && c.abatimentos.length ? el("ul", { class: "abatimentos" }, c.abatimentos.map((a) => el("li", {},
+        `✔ Abatido ${moeda(a.total)} às ${hora(a.criado_em)} (` + a.formas.map((f) => estado.formas[f.forma]).join(" + ") + ")"))) : null,
       el("div", { class: "acoes" },
         estado.impressora_caixa_ativa ? el("button", { onclick: () => acao("POST", "/api/contas/imprimir", { pedido_ids: c.pedidos.map((p) => p.id), titulo: c.titulo }, "Conta enviada para a impressora") }, "🖨️ Imprimir conta") : null,
         pode.receber ? el("button", { class: "verde", disabled: !estado.caixa_aberto, title: estado.caixa_aberto ? "" : "Abra o caixa para receber",
           onclick: () => dialogoPagamento(c.pedidos, c.titulo) }, "💲 Receber") : null))));
   }
 
-  function dialogoPagamento(pedidos, titulo) {
+  // Valores já abatidos (partes da conta pagas antes) ligados a esses pedidos.
+  function abatidoDe(pedidos) {
+    const ids = new Set(pedidos.map((p) => p.id));
+    const vistos = new Map();
+    for (const c of estado.contas) {
+      for (const a of c.abatimentos || []) {
+        if (a.pedido_ids.some((i) => ids.has(i))) vistos.set(a.id, a);
+      }
+    }
+    const lista = [...vistos.values()];
+    return { subtotal: lista.reduce((s, a) => s + a.subtotal, 0), pago: lista.reduce((s, a) => s + a.total, 0) };
+  }
+
+  const ICONE_FORMA = { dinheiro: "💵", pix: "⚡", debito: "💳", credito: "💳", vale: "🍽️", outro: "🧾" };
+
+  // Janela de pagamento: um valor só, a pessoa toca na forma de pagamento.
+  // Desconto, taxa, dividir e "outro valor" (abater só uma parte) ficam em
+  // botões, escondidos até serem usados. `seguir` vem preenchido quando a
+  // conta está sendo dividida e a janela reabre para a próxima pessoa.
+  function dialogoPagamento(pedidos, titulo, seguir) {
     if (!estado.caixa_aberto) {
       aviso("O caixa está fechado. Abra o caixa para receber.", "erro");
       return;
     }
-    const subtotal = pedidos.reduce((s, p) => s + p.total_centavos, 0);
-    const desconto = campoDinheiro();
-    const acrescimo = campoDinheiro();
-    const taxa = estado.taxa_servico_percentual || 0;
-    const campos = {};
-    const saldo = el("div", { class: "saldo-pagamento" });
-    const totalEl = el("strong", {});
+    const s = seguir || {};
+    const conta = pedidos.reduce((t, p) => t + p.total_centavos, 0);
+    const ab = s.abatido !== undefined ? { subtotal: s.abatido, pago: s.jaPago } : abatidoDe(pedidos);
+    const falta = conta - ab.subtotal;          // parte da conta que ainda não foi paga
+    const taxaPct = estado.taxa_servico_percentual || 0;
+    const st = {
+      desconto: 0, taxa: false, pessoas: s.pessoas || 0, pessoa: s.pessoa || 1, totalPessoas: s.totalPessoas || 0,
+      outroValor: null, forma: null,
+    };
 
-    function total() {
-      return subtotal - (centavos(desconto.value) || 0) + (centavos(acrescimo.value) || 0);
-    }
-    function recebido() {
-      return Object.values(campos).reduce((s, c) => s + (centavos(c.value) || 0), 0);
-    }
-    function atualizar() {
-      totalEl.textContent = moeda(total());
-      const dif = recebido() - total();
-      saldo.replaceChildren(
-        el("span", {}, dif < 0 ? "Falta receber" : dif > 0 ? "Troco" : "Tudo certo"),
-        el("span", { class: dif < 0 ? "negativo" : "positivo" }, moeda(Math.abs(dif))));
+    const acrescimo = () => (st.taxa ? Math.round(falta * taxaPct / 100) : 0);
+    const maximo = () => Math.max(0, falta - st.desconto + acrescimo());
+    function aPagar() {
+      if (st.outroValor !== null) return st.outroValor;
+      if (st.pessoas > 1) return Math.ceil(maximo() / st.pessoas);
+      return maximo();
     }
 
-    const grade = el("div", { class: "grade-formas" }, Object.entries(estado.formas).map(([forma, nome]) => {
-      campos[forma] = campoDinheiro({ oninput: atualizar });
-      return el("label", { class: "forma" },
-        el("span", {}, nome, el("button", { type: "button", title: "Preencher com o que falta", onclick: () => {
-          campos[forma].value = "";
-          const falta = total() - recebido();
-          if (falta > 0) campos[forma].value = reais(falta);
-          atualizar();
-        } }, "restante")),
-        campos[forma]);
+    // --- resumo da conta
+    const itens = el("details", { class: "itens-conta" }, el("summary", {}, `Ver itens (${pedidos.length} pedido${pedidos.length > 1 ? "s" : ""})`),
+      el("ul", {}, pedidos.map((p) => el("li", {}, `Pedido ${p.codigo}: ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))));
+    const linhasResumo = el("div", {});
+
+    // --- ajustes (escondidos até tocar)
+    const campoDesconto = campoDinheiro({ oninput: () => { st.desconto = centavos(campoDesconto.value) || 0; atualizar(); } });
+    const caixaDesconto = el("div", { class: "ajuste-aberto", hidden: true }, el("label", {}, "Desconto (R$)"), campoDesconto);
+    const nPessoas = el("strong", { class: "n-pessoas" }, "2");
+    const caixaDividir = el("div", { class: "ajuste-aberto dividir", hidden: true },
+      el("span", {}, "Dividir em"),
+      el("button", { type: "button", onclick: () => { st.pessoas = Math.max(2, st.pessoas - 1); atualizar(); } }, "−"),
+      nPessoas,
+      el("button", { type: "button", onclick: () => { st.pessoas = Math.min(50, st.pessoas + 1); atualizar(); } }, "+"),
+      el("span", {}, "pessoas"));
+    const campoOutro = campoDinheiro({ oninput: () => { st.outroValor = campoOutro.value.trim() ? centavos(campoOutro.value) : null; atualizar(); } });
+    const caixaOutro = el("div", { class: "ajuste-aberto", hidden: true },
+      el("label", {}, "Valor a pagar agora (R$) — o resto continua em aberto na conta"), campoOutro);
+
+    function alternar(botao, caixa, ligar, desligar) {
+      const aberto = !caixa.hidden;
+      caixa.hidden = aberto;
+      botao.classList.toggle("ligado", !aberto);
+      (aberto ? desligar : ligar)();
+      atualizar();
+      if (!aberto) { const i = caixa.querySelector("input"); if (i) i.focus(); }
+    }
+    const bDesconto = el("button", { type: "button", class: "ajuste" }, "➖ Desconto");
+    bDesconto.onclick = () => alternar(bDesconto, caixaDesconto, () => {}, () => { campoDesconto.value = ""; st.desconto = 0; });
+    const bTaxa = taxaPct ? el("button", { type: "button", class: "ajuste" }, `➕ Taxa ${taxaPct}%`) : null;
+    if (bTaxa) bTaxa.onclick = () => { st.taxa = !st.taxa; bTaxa.classList.toggle("ligado", st.taxa); atualizar(); };
+    const bDividir = el("button", { type: "button", class: "ajuste" }, "➗ Dividir conta");
+    bDividir.onclick = () => alternar(bDividir, caixaDividir,
+      () => { st.pessoas = 2; st.pessoa = 1; st.totalPessoas = 0; fecharOutro(); },
+      () => { st.pessoas = 0; st.totalPessoas = 0; });
+    const bOutro = el("button", { type: "button", class: "ajuste" }, "✏️ Pagar só uma parte");
+    function fecharOutro() { caixaOutro.hidden = true; bOutro.classList.remove("ligado"); campoOutro.value = ""; st.outroValor = null; }
+    bOutro.onclick = () => alternar(bOutro, caixaOutro, () => {
+      if (!caixaDividir.hidden) { caixaDividir.hidden = true; bDividir.classList.remove("ligado"); st.pessoas = 0; }
+    }, () => { campoOutro.value = ""; st.outroValor = null; });
+    if (st.pessoas > 1) { caixaDividir.hidden = false; bDividir.classList.add("ligado"); }
+
+    // --- valor a pagar agora
+    const valorGrande = el("div", { class: "valor-agora" });
+
+    // --- forma de pagamento: um toque
+    const botoesForma = {};
+    const campoEntregue = campoDinheiro({ oninput: atualizar });
+    const troco = el("strong", {});
+    const caixaDinheiro = el("div", { class: "caixa-dinheiro", hidden: true },
+      el("label", {}, "Quanto o cliente entregou? (para calcular o troco — pode deixar em branco)"), campoEntregue,
+      el("div", { class: "linha-troco" }, el("span", {}, "Troco"), troco));
+    const grade = el("div", { class: "botoes-forma" }, Object.entries(estado.formas).map(([forma, nome]) => {
+      botoesForma[forma] = el("button", { type: "button", class: "botao-forma", onclick: () => {
+        st.forma = forma;
+        caixaDinheiro.hidden = forma !== "dinheiro";
+        atualizar();
+        if (forma === "dinheiro") campoEntregue.focus(); else botaoOk().focus();
+      } }, el("span", { class: "icone" }, ICONE_FORMA[forma] || "💲"), nome);
+      return botoesForma[forma];
     }));
-    desconto.addEventListener("input", atualizar);
-    acrescimo.addEventListener("input", atualizar);
 
-    const corpo = el("div", {},
-      el("div", { class: "pagamento-resumo" },
-        el("ul", {}, pedidos.map((p) => el("li", {}, `Pedido ${p.codigo}: ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))),
-        el("div", { class: "linha-valor" }, el("span", {}, "Subtotal"), el("span", {}, moeda(subtotal)))),
-      el("div", { class: "campos-duplos" },
-        el("div", {}, el("label", {}, "Desconto (R$)"), desconto),
-        el("div", {}, el("label", {}, "Acréscimo / taxa de serviço (R$)",
-          taxa ? el("button", { type: "button", class: "discreto", onclick: () => { acrescimo.value = reais(Math.round(subtotal * taxa / 100)); atualizar(); } }, `+${taxa}%`) : null), acrescimo)),
-      el("div", { class: "linha-valor destaque" }, el("span", {}, "Total a pagar"), totalEl),
-      el("label", {}, "Como o cliente vai pagar? (pode dividir entre várias formas; em dinheiro, digite o valor entregue para calcular o troco)"),
+    function botaoOk() { return janela.elemento.querySelector("button[type=submit]"); }
+
+    function atualizar() {
+      nPessoas.textContent = st.pessoas;
+      const linhas = [el("div", { class: "linha-valor" }, el("span", {}, "Total da conta"), el("span", {}, moeda(conta)))];
+      // taxa (ou desconto) que já entrou num pagamento anterior desta conta
+      const ajusteAntes = ab.pago - ab.subtotal;
+      if (ajusteAntes > 0) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Taxa de serviço (já cobrada)"), el("span", {}, "+ " + moeda(ajusteAntes))));
+      if (ajusteAntes < 0) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Desconto (já dado)"), el("span", {}, "− " + moeda(-ajusteAntes))));
+      if (ab.subtotal) linhas.push(el("div", { class: "linha-valor positivo" }, el("span", {}, "Já pago antes (abatido)"), el("span", {}, "− " + moeda(ab.pago))));
+      if (st.desconto) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Desconto"), el("span", {}, "− " + moeda(st.desconto))));
+      if (acrescimo()) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, `Taxa de serviço (${taxaPct}%)`), el("span", {}, "+ " + moeda(acrescimo()))));
+      if (ab.subtotal || st.desconto || acrescimo()) linhas.push(el("div", { class: "linha-valor destaque" }, el("span", {}, "Falta pagar"), el("span", {}, moeda(maximo()))));
+      linhasResumo.replaceChildren(...linhas);
+
+      const valor = aPagar();
+      const valido = !Number.isNaN(valor) && valor >= 0 && valor <= maximo();
+      const rotulo = st.pessoas > 1 || st.totalPessoas
+        ? `Pessoa ${st.pessoa} de ${st.totalPessoas || st.pessoas} paga`
+        : st.outroValor !== null ? "Pagar agora (parte)" : "A pagar";
+      valorGrande.replaceChildren(el("span", {}, rotulo), el("strong", { class: valido ? "" : "negativo" }, valido ? moeda(valor) : "valor inválido"));
+      if (valido && valor < maximo()) valorGrande.append(el("small", {}, `Depois deste pagamento a conta continua aberta com ${moeda(maximo() - valor)}.`));
+      if (st.outroValor !== null && valor > maximo()) valorGrande.append(el("small", { class: "negativo" }, `Passa do que falta (${moeda(maximo())}).`));
+
+      for (const [f, b] of Object.entries(botoesForma)) b.classList.toggle("escolhida", st.forma === f);
+      const entregue = centavos(campoEntregue.value) || 0;
+      troco.textContent = entregue > valor ? moeda(entregue - valor) : entregue && entregue < valor ? "falta " + moeda(valor - entregue) : "—";
+      troco.className = entregue && entregue < valor ? "negativo" : "positivo";
+
+      const ok = botaoOk();
+      if (ok) {
+        ok.disabled = !valido || !st.forma;
+        ok.textContent = !st.forma ? "Escolha como o cliente vai pagar"
+          : valor < maximo() ? `Abater ${moeda(valor)} no ${estado.formas[st.forma]}`
+          : `Receber ${moeda(valor)} no ${estado.formas[st.forma]}`;
+      }
+    }
+
+    const corpo = el("div", { class: "pagamento" },
+      el("div", { class: "pagamento-resumo" }, linhasResumo, itens),
+      el("div", { class: "ajustes" }, bDesconto, bTaxa, bDividir, bOutro),
+      caixaDesconto, caixaDividir, caixaOutro,
+      valorGrande,
+      el("label", {}, "Como o cliente vai pagar?"),
       grade,
-      saldo);
-    atualizar();
-    dialogo({
-      titulo: "Receber — " + titulo,
-      corpo, largo: true, confirmar: "Confirmar pagamento",
+      caixaDinheiro,
+      el("p", { class: "dica" }, "Pagou com duas formas (ex.: parte no Pix e parte no cartão)? Toque em \"Pagar só uma parte\", receba a primeira e depois o resto."));
+
+    const janela = dialogo({
+      titulo: "Receber — " + titulo + (st.totalPessoas ? ` (pessoa ${st.pessoa} de ${st.totalPessoas})` : ""),
+      corpo, largo: true, confirmar: "Receber",
       aoConfirmar: async () => {
-        for (const c of [desconto, acrescimo, ...Object.values(campos)]) {
-          if (Number.isNaN(centavos(c.value))) throw new Error("Há um valor inválido. Use por exemplo 12,50");
+        const valor = aPagar();
+        if (Number.isNaN(valor) || Number.isNaN(st.desconto) || Number.isNaN(centavos(campoEntregue.value))) {
+          throw new Error("Há um valor inválido. Use por exemplo 12,50");
         }
+        if (!st.forma) throw new Error("Toque em como o cliente vai pagar.");
+        const entregue = centavos(campoEntregue.value) || 0;
+        const pago = st.forma === "dinheiro" && entregue > valor ? entregue : valor;
         const r = await api("POST", "/api/recebimentos", {
           pedido_ids: pedidos.map((p) => p.id),
-          desconto: centavos(desconto.value), acrescimo: centavos(acrescimo.value),
-          formas: Object.entries(campos).map(([forma, c]) => ({ forma, valor: centavos(c.value) })).filter((f) => f.valor > 0),
+          desconto: st.desconto, acrescimo: acrescimo(), valor,
+          formas: pago ? [{ forma: st.forma, valor: pago }] : [],
         });
-        aviso("Pagamento de " + moeda(r.recebimento.total) + " registrado" + (r.recebimento.troco ? " — troco " + moeda(r.recebimento.troco) : ""), "ok");
+        const rec = r.recebimento;
+        const trocoTxt = rec.troco ? " — troco " + moeda(rec.troco) : "";
+        if (rec.parcial) {
+          const restante = maximo() - valor;
+          aviso(`Abatido ${moeda(rec.total)}${trocoTxt}. A conta continua aberta com ${moeda(restante)}.`, "ok");
+          monitor.forcar();
+          // Conta dividida: já abre o pagamento da próxima pessoa.
+          if (st.pessoas > 1) {
+            setTimeout(() => dialogoPagamento(pedidos, titulo, {
+              abatido: ab.subtotal + rec.subtotal, jaPago: ab.pago + rec.total,
+              pessoas: st.pessoas - 1, pessoa: st.pessoa + 1, totalPessoas: st.totalPessoas || st.pessoas,
+            }), 0);
+          }
+          return;
+        }
+        aviso("Pagamento de " + moeda(rec.total) + " registrado" + trocoTxt, "ok");
         monitor.forcar();
       },
     });
+    atualizar();
   }
 
   function renderRecebidos() {

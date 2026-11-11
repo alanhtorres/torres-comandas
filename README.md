@@ -242,8 +242,19 @@ juntos: nunca fica uma coisa sem a outra.
 1. **Abrir o caixa** informando o fundo de troco.
 2. Receber as contas. Pedidos ainda não pagos ficam em **A receber**, agrupados por
    mesa (a conta da mesa inteira é paga de uma vez) ou por pedido (balcão). No balcão,
-   **Enviar e receber** já abre o pagamento. Dá para dividir entre várias formas,
-   aplicar desconto ou taxa de serviço, e o troco é calculado sozinho.
+   **Enviar e receber** já abre o pagamento.
+   - A janela de pagamento mostra **um valor só**: a pessoa toca na forma de
+     pagamento (Dinheiro, Pix, cartões...) e confirma. Em dinheiro, digita quanto o
+     cliente entregou e o troco aparece.
+   - **Desconto**, **Taxa** de serviço, **Dividir conta** e **Pagar só uma parte**
+     ficam em botões, escondidos até serem usados.
+   - **Dividir conta** em N pessoas: cada uma paga a sua parte (e pode pagar de um
+     jeito diferente); a janela já reabre para a próxima pessoa.
+   - **Pagar só uma parte** (abater): o valor pago é descontado e a conta/comanda
+     continua aberta com o que falta. Serve também para quem paga com duas formas.
+     A comanda só fecha no último pagamento.
+   - A conta mostra "já pago / falta", e a conferência impressa também. Um valor
+     abatido só pode ser estornado antes do pagamento final da conta.
 3. **Sangria** (retirada) e **suprimento** (reforço) com motivo.
 4. **Fechar o caixa**: a pessoa conta o dinheiro da gaveta **sem ver** quanto
    deveria ter (fechamento "cego"); o sistema então mostra o esperado, o contado e

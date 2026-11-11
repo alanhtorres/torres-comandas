@@ -998,3 +998,24 @@ def test_pedido_reenviado_pela_contingencia_nao_duplica(ambiente, admin, impress
     assert len(lancou) == 1 and "feito sem Wi-Fi às" in lancou[0]["detalhes"]
     # outro código = outro pedido
     assert garcom.post("/api/pedidos", json={**corpo, "id_cliente": "abc-124"}).get_json()["pedido"]["id"] != r1["pedido"]["id"]
+
+
+def test_abater_valor_e_conta_dividida_pela_api(ambiente, admin):
+    app, banco, _ = ambiente
+    criar_usuario(admin, "caixa", ["pedidos", "receber", "caixa"])
+    caixa = entrar(app, "caixa")
+    p = _produto(admin, preco=3000)
+    pedido = caixa.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 2}], "mesa": "5"}).get_json()["pedido"]
+    caixa.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    # metade agora em dinheiro (entregou 50,00 para 30,00)
+    r = caixa.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "valor": 3000,
+                                              "formas": [{"forma": "dinheiro", "valor": 5000}]}).get_json()
+    assert r["recebimento"]["parcial"] is True and r["recebimento"]["troco"] == 2000
+    conta = caixa.get("/api/estado").get_json()["contas"][0]
+    assert (conta["total"], conta["abatido"], conta["falta"]) == (6000, 3000, 3000)
+    assert conta["abatimentos"][0]["pedido_ids"] == [pedido["id"]]
+    # o resto no Pix fecha a conta
+    r = caixa.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "pix", "valor": 3000}]})
+    assert r.status_code == 200 and r.get_json()["recebimento"]["parcial"] is False
+    estado = caixa.get("/api/estado").get_json()
+    assert estado["contas"] == [] and estado["sessao"]["total_vendas"] == 6000 and estado["sessao"]["qtd_vendas"] == 1

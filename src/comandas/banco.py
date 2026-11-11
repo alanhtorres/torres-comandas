@@ -252,6 +252,14 @@ CREATE TABLE IF NOT EXISTS recebimentos (
     motivo_estorno TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_recebimentos_data ON recebimentos(criado_em);
+-- Valor abatido (pagamento de parte da conta, ex.: conta dividida): fica
+-- ligado aos pedidos que ainda não foram pagos e é descontado do pagamento
+-- final, que é o que marca os pedidos como pagos.
+CREATE TABLE IF NOT EXISTS recebimento_abatimentos (
+    recebimento_id INTEGER NOT NULL REFERENCES recebimentos(id),
+    pedido_id INTEGER NOT NULL REFERENCES pedidos(id)
+);
+CREATE INDEX IF NOT EXISTS idx_abatimentos_pedido ON recebimento_abatimentos(pedido_id);
 CREATE TABLE IF NOT EXISTS recebimento_formas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     recebimento_id INTEGER NOT NULL REFERENCES recebimentos(id),
@@ -337,6 +345,10 @@ COLUNAS_NOVAS = {
     "pedido_itens": {
         "vai_cozinha": "INTEGER NOT NULL DEFAULT 1",
         "setor": "TEXT NOT NULL DEFAULT ''",
+    },
+    "recebimentos": {
+        # 1 = valor abatido (parte da conta); a conta continua em aberto.
+        "parcial": "INTEGER NOT NULL DEFAULT 0",
     },
     "pedidos": {
         "usuario_id": "INTEGER",
@@ -1346,7 +1358,33 @@ class Banco:
             grupo = grupos.setdefault(chave, {"chave": chave, "titulo": titulo, "pedidos": [], "total": 0})
             grupo["pedidos"].append(pedido)
             grupo["total"] += pedido["total_centavos"]
+        for grupo in grupos.values():
+            ab = self.abatido([p["id"] for p in grupo["pedidos"]])
+            grupo["abatido"] = ab["subtotal"]          # parte da conta já paga
+            grupo["ja_pago"] = ab["pago"]              # quanto entrou (com taxa, sem desconto)
+            grupo["abatimentos"] = ab["lista"]
+            grupo["falta"] = max(0, grupo["total"] - ab["subtotal"])
         return list(grupos.values())
+
+    def abatido(self, pedido_ids: list) -> dict:
+        """Valores já abatidos (pagamentos parciais não estornados) ligados a
+        esses pedidos ainda não pagos. "subtotal" é a parte da conta que eles
+        cobrem; "pago" é o que o cliente pagou neles."""
+        ids = [int(i) for i in pedido_ids]
+        if not ids:
+            return {"subtotal": 0, "pago": 0, "lista": []}
+        marcas = ",".join("?" * len(ids))
+        with self.lock:
+            linhas = [dict(l) for l in self.conn.execute(
+                "SELECT DISTINCT r.id, r.subtotal, r.total, r.criado_em, r.usuario_nome FROM recebimentos r "
+                "JOIN recebimento_abatimentos a ON a.recebimento_id = r.id "
+                f"WHERE r.parcial = 1 AND r.estornado_em IS NULL AND a.pedido_id IN ({marcas}) ORDER BY r.id", ids)]
+            for l in linhas:
+                l["formas"] = [dict(f) for f in self.conn.execute(
+                    "SELECT forma, valor FROM recebimento_formas WHERE recebimento_id = ? ORDER BY id", (l["id"],))]
+                l["pedido_ids"] = [a["pedido_id"] for a in self.conn.execute(
+                    "SELECT pedido_id FROM recebimento_abatimentos WHERE recebimento_id = ?", (l["id"],))]
+        return {"subtotal": sum(l["subtotal"] for l in linhas), "pago": sum(l["total"] for l in linhas), "lista": linhas}
 
     # --- Clientes ---------------------------------------------------------
 
@@ -1614,8 +1652,12 @@ class Banco:
                 "SELECT COALESCE(SUM(total_centavos), 0) AS total, "
                 "COALESCE(SUM(CASE WHEN recebimento_id IS NULL THEN total_centavos ELSE 0 END), 0) AS a_receber, "
                 "COUNT(*) AS pedidos FROM pedidos WHERE comanda_id = ? AND status != 'cancelado'", (k["id"],)).fetchone()
+            abertos = [l["id"] for l in self.conn.execute(
+                "SELECT id FROM pedidos WHERE comanda_id = ? AND status != 'cancelado' AND recebimento_id IS NULL", (k["id"],))]
+        abatido = self.abatido(abertos)["subtotal"]
         cliente = self.obter_cliente(k["cliente_id"], com_cpf=False)
-        k.update({"total": soma["total"], "a_receber": soma["a_receber"], "qtd_pedidos": soma["pedidos"],
+        k.update({"total": soma["total"], "a_receber": max(0, soma["a_receber"] - abatido), "abatido": abatido,
+                  "qtd_pedidos": soma["pedidos"],
                   "aberta": k["fechada_em"] is None,
                   "telefone_formatado": cliente["telefone_formatado"] if cliente else "",
                   "aniversario_hoje": bool(cliente and cliente["aniversario_hoje"])})
@@ -1731,10 +1773,14 @@ class Banco:
             self._registrar(por, "Fez sangria" if tipo == "sangria" else "Fez suprimento", f"{moeda(valor)} — {motivo}")
         return self.resumo_sessao(sessao["id"])
 
-    def receber(self, pedido_ids: list, formas: list, por: dict, desconto=0, acrescimo=0) -> dict:
+    def receber(self, pedido_ids: list, formas: list, por: dict, desconto=0, acrescimo=0, valor=None) -> dict:
         """Registra o pagamento de um ou mais pedidos (ex.: a conta inteira
         da mesa), podendo dividir entre várias formas. Se entrar mais
-        dinheiro do que o devido, a sobra é o troco."""
+        dinheiro do que o devido, a sobra é o troco.
+
+        Com "valor" menor do que falta pagar, é um valor abatido (conta
+        dividida, ou alguém que pagou a parte dele e foi embora): a conta
+        continua em aberto com o que sobrou."""
         sessao = self._exigir_sessao()
         if not isinstance(pedido_ids, list) or not pedido_ids:
             raise ErroNegocio("Selecione o que vai ser pago.")
@@ -1749,11 +1795,38 @@ class Banco:
             if pedido["pago"]:
                 raise ErroNegocio(f"O pedido nº {pedido['codigo']} já foi pago.")
             pedidos.append(pedido)
-        subtotal = sum(p["total_centavos"] for p in pedidos)
+        conta = sum(p["total_centavos"] for p in pedidos)
+        ab = self.abatido([p["id"] for p in pedidos])
+        incluidos = {p["id"] for p in pedidos}
+        with self.lock:
+            for a in ab["lista"]:
+                for l in self.conn.execute(
+                        "SELECT p.codigo, p.id FROM recebimento_abatimentos a JOIN pedidos p ON p.id = a.pedido_id "
+                        "WHERE a.recebimento_id = ? AND p.status != 'cancelado' AND p.recebimento_id IS NULL", (a["id"],)):
+                    if l["id"] not in incluidos:
+                        raise ErroNegocio(f"Já foi abatido um valor da conta do pedido nº {l['codigo']}: "
+                                          "receba a conta inteira junto.")
+        subtotal = conta - ab["subtotal"]  # o que falta da conta
+        if subtotal <= 0:
+            raise ErroNegocio("O valor já abatido cobre esta conta (algum pedido foi cancelado depois?). "
+                              "Estorne um dos valores abatidos na aba Recebidos.")
         desconto = _centavos(desconto, "desconto")
         acrescimo = _centavos(acrescimo, "acréscimo")
         if desconto > subtotal:
-            raise ErroNegocio("O desconto é maior que o valor da conta.")
+            raise ErroNegocio("O desconto é maior do que falta pagar.")
+        maximo = subtotal - desconto + acrescimo
+        parcial = False
+        if valor not in (None, ""):
+            valor = _centavos(valor, "valor a pagar agora")
+            if valor > maximo:
+                raise ErroNegocio(f"O valor a pagar agora passa do que falta ({moeda(maximo)}).")
+            if valor < maximo:
+                parcial = True
+                # parte da conta que este pagamento cobre (o desconto e a taxa
+                # entram neste pagamento)
+                subtotal = valor + desconto - acrescimo
+                if subtotal <= 0:
+                    raise ErroNegocio("O valor a pagar agora precisa ser maior que a taxa de serviço.")
         total = subtotal - desconto + acrescimo
 
         valores = {}
@@ -1780,18 +1853,31 @@ class Banco:
         mesas = sorted({p["mesa"] for p in pedidos if p["mesa"]})
         comandas = sorted({p["comanda_numero"] for p in pedidos if p["comanda_numero"]})
         codigos = ", ".join(p["codigo"] for p in pedidos)
-        descricao = ((f"Comanda {', '.join(comandas)} — " if comandas else "")
+        descricao = (("Valor abatido — " if parcial else "")
+                     + (f"Comanda {', '.join(comandas)} — " if comandas else "")
                      + (f"Mesa {', '.join(mesas)} — " if mesas else "") + f"pedido(s) {codigos}")
         with self._transacao():
             cur = self.conn.execute(
                 "INSERT INTO recebimentos (sessao_id, usuario_id, usuario_nome, descricao, subtotal, desconto, "
-                "acrescimo, total, troco, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (sessao["id"], por["id"], por["nome"], descricao, subtotal, desconto, acrescimo, total, troco, self.agora()),
+                "acrescimo, total, troco, criado_em, parcial) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (sessao["id"], por["id"], por["nome"], descricao, subtotal, desconto, acrescimo, total, troco,
+                 self.agora(), int(parcial)),
             )
             rid = cur.lastrowid
-            for forma, valor in valores.items():
+            for forma, v in valores.items():
                 self.conn.execute("INSERT INTO recebimento_formas (recebimento_id, forma, valor) VALUES (?, ?, ?)",
-                                  (rid, forma, valor))
+                                  (rid, forma, v))
+            if parcial:
+                for p in pedidos:
+                    self.conn.execute("INSERT INTO recebimento_abatimentos (recebimento_id, pedido_id) VALUES (?, ?)",
+                                      (rid, p["id"]))
+                self._registrar(por, "Recebeu valor abatido", f"{descricao}: {moeda(total)} em "
+                                + ", ".join(f"{FORMAS_PAGAMENTO[f]} {moeda(v)}" for f, v in valores.items())
+                                + (f"; desconto {moeda(desconto)}" if desconto else "")
+                                + (f"; acréscimo {moeda(acrescimo)}" if acrescimo else "")
+                                + (f"; troco {moeda(troco)}" if troco else "")
+                                + f"; falta {moeda(conta - ab['subtotal'] - subtotal)}")
+                return self.obter_recebimento(rid)
             for p in pedidos:
                 atualizado = self.conn.execute(
                     "UPDATE pedidos SET recebimento_id = ? WHERE id = ? AND recebimento_id IS NULL", (rid, p["id"]))
@@ -1823,6 +1909,9 @@ class Banco:
                 "SELECT forma, valor FROM recebimento_formas WHERE recebimento_id = ? ORDER BY id", (rid,))]
             rec["pedidos"] = [l["codigo"] for l in self.conn.execute(
                 "SELECT codigo FROM pedidos WHERE recebimento_id = ? ORDER BY id", (rid,))]
+            rec["parcial"] = bool(rec["parcial"])
+            rec["pedido_ids_abatidos"] = [l["pedido_id"] for l in self.conn.execute(
+                "SELECT pedido_id FROM recebimento_abatimentos WHERE recebimento_id = ?", (rid,))]
             return rec
 
     def listar_recebimentos(self, sessao_id: int) -> list:
@@ -1840,6 +1929,14 @@ class Banco:
         sessao = self.sessao_aberta()
         if not sessao or sessao["id"] != rec["sessao_id"]:
             raise ErroNegocio("Só dá para estornar pagamentos do caixa que está aberto agora.")
+        if rec["parcial"]:
+            with self.lock:
+                ja_fechada = self.conn.execute(
+                    "SELECT 1 FROM recebimento_abatimentos a JOIN pedidos p ON p.id = a.pedido_id "
+                    "WHERE a.recebimento_id = ? AND p.recebimento_id IS NOT NULL", (rid,)).fetchone()
+            if ja_fechada:
+                raise ErroNegocio("Esse valor abatido já entrou no pagamento final da conta. "
+                                  "Estorne primeiro o pagamento final.")
         motivo = _texto(motivo, 200)
         if not motivo:
             raise ErroNegocio("Informe o motivo do estorno.")
@@ -1870,7 +1967,7 @@ class Banco:
             ):
                 por_forma[l["forma"]] = l["v"]
             vendas = self.conn.execute(
-                "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(desconto), 0) AS desc, "
+                "SELECT COALESCE(SUM(1 - parcial), 0) AS n, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(desconto), 0) AS desc, "
                 "COALESCE(SUM(acrescimo), 0) AS acr, COALESCE(SUM(troco), 0) AS troco "
                 "FROM recebimentos WHERE sessao_id = ? AND estornado_em IS NULL", (sessao_id,)
             ).fetchone()
@@ -1939,7 +2036,7 @@ class Banco:
         with self.lock:
             filtro = "r.criado_em >= ? AND r.criado_em < ? AND r.estornado_em IS NULL"
             geral = self.conn.execute(
-                f"SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(subtotal), 0) AS bruto, "
+                f"SELECT COALESCE(SUM(1 - parcial), 0) AS n, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(subtotal), 0) AS bruto, "
                 f"COALESCE(SUM(desconto), 0) AS desc, COALESCE(SUM(acrescimo), 0) AS acr FROM recebimentos r WHERE {filtro}",
                 (ini, fim)).fetchone()
             por_forma = {f: 0 for f in FORMAS_PAGAMENTO}
@@ -1966,9 +2063,14 @@ class Banco:
                 "WHERE status = 'cancelado' AND atualizado_em >= ? AND atualizado_em < ? ORDER BY atualizado_em", (ini, fim))]
             sessoes_ids = [l["id"] for l in self.conn.execute(
                 "SELECT id FROM sessoes_caixa WHERE aberto_em >= ? AND aberto_em < ? ORDER BY id", (ini, fim))]
-            pendentes = self.conn.execute(
+            pendentes = dict(self.conn.execute(
                 "SELECT COUNT(*) AS n, COALESCE(SUM(total_centavos), 0) AS total FROM pedidos "
-                "WHERE tipo = 'pedido' AND status != 'cancelado' AND recebimento_id IS NULL").fetchone()
+                "WHERE tipo = 'pedido' AND status != 'cancelado' AND recebimento_id IS NULL").fetchone())
+            # o que já foi abatido dessas contas não está mais "a receber"
+            pendentes["total"] -= self.conn.execute(
+                "SELECT COALESCE(SUM(r.subtotal), 0) FROM recebimentos r WHERE r.parcial = 1 AND r.estornado_em IS NULL "
+                "AND EXISTS (SELECT 1 FROM recebimento_abatimentos a JOIN pedidos p ON p.id = a.pedido_id "
+                "WHERE a.recebimento_id = r.id AND p.recebimento_id IS NULL AND p.status != 'cancelado')").fetchone()[0]
         return {
             "de": de, "ate": ate,
             "qtd_vendas": geral["n"],
