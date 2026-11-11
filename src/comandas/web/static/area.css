@@ -27,3 +27,6 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 /* janela estreita: só os ícones nas abas */
 @media (max-width: 1100px) { .barra-abas .marca { display: none; } }
 @media (max-width: 900px) { #abas .nome { display: none; } #abas button { padding: 10px 14px; } }
+.barra-abas .marca { display: inline-flex; align-items: center; }
+.barra-abas .logo-estreito { display: none; height: 30px; max-width: 90px; object-fit: contain; margin: 0 8px 6px 4px; }
+@media (max-width: 1100px) { .barra-abas .logo-estreito { display: inline-block; } }

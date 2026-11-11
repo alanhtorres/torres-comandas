@@ -127,7 +127,19 @@ Instalação (sem Play Store e sem internet — o celular baixa direto do PC):
 
 Se não conectar, o app explica o motivo (IP sem resposta, celular fora do Wi-Fi da
 loja, firewall/antivírus do principal). Se o IP do PC mudar, toque em **Trocar o IP
-do computador principal**. Enquanto o turno está ativo aparece
+do computador principal**. Dentro do app só existe a tela do garçom (sem "Início",
+abas ou painel).
+
+**Pedidos em contingência (longe do Wi-Fi):** se o garçom fizer o pedido sem
+conexão, ele fica **guardado no celular** (faixa azul "📡 pedido guardado") e é
+**enviado sozinho quando o Wi-Fi volta** — mesmo que o app seja fechado e aberto
+de novo nesse meio tempo (a tela do garçom abre pela cópia guardada no celular, com
+o cardápio e as mesas da última vez). Cada pedido leva um código: se chegar duas
+vezes, o sistema lança uma vez só. Se o sistema recusar o pedido guardado (produto
+indisponível, comanda fechada), a faixa avisa e o garçom escolhe tentar de novo ou
+descartar. O histórico registra "feito sem Wi-Fi às HH:MM e enviado depois".
+
+Enquanto o turno está ativo aparece
 um aviso fixo na barra do celular; ao final do dia, **⚙️ App → Encerrar turno**.
 Em alguns celulares (Xiaomi, Samsung) vale tocar em **⚙️ App → Não deixar o
 Android pausar os avisos**. Quando o sistema é atualizado, o app avisa que há
@@ -190,28 +202,30 @@ só aparece para quem tem a permissão "Clientes e WhatsApp". A pedido do client
 botão "Apagar dados (LGPD)" apaga nome, telefone, CPF e nascimento — as vendas
 continuam nos relatórios, sem os dados pessoais.
 
-## Cozinha, bar ou já pronto (tela ou impressora)
+## Ambientes: cozinha, bar, pizzaria... (tela ou impressora)
 
-Cada produto tem a opção **"Sai na impressora"**:
-- **Cozinha**: precisa de preparo — aparece na tela da cozinha e sai na impressora dela.
-- **Bar**: bebidas, drinks — sai na impressora do bar (ambiente separado).
-- **Nenhuma**: já pronto (bebida em lata, chips, sobremesa embalada) — aparece só
-  no caixa e no garçom.
+Cada lugar de preparo é um **ambiente**. Cozinha e bar já vêm prontos; em
+Administração → Configurações → "Ambientes: como saem os pedidos", o botão
+**➕ Novo ambiente** cria outros (pizzaria, confeitaria, chapa...), com nome e ícone.
+Para cada ambiente o administrador escolhe **tela**, **impressora** ou os dois:
+- **Com tela**: ganha uma aba igual à da cozinha (endereço `/preparo/<nome>` para os
+  criados) e marca "pronto" na sua parte. Pedido que vai para mais de um ambiente só
+  fica pronto (e vai para o painel) quando todos terminarem.
+- **Sem tela**: só imprime e não segura o pedido (a aba some).
+- Sem tela e sem impressora, a configuração avisa.
 
-Em Administração → Cardápio, a linha de cada categoria tem **"Sai na impressora"**
-para escolher de uma vez onde sai a categoria inteira (ex.: Bebidas → Bar, Lanches →
-Cozinha). Depois dá para ajustar produto por produto (ex.: o suco natural na cozinha).
-Produto novo numa categoria que já existe vem com a impressora dela.
+Cada produto tem **"Vai para"**: um ambiente ou **Nenhum lugar** (já pronto: bebida
+em lata, chips — aparece só no caixa e no garçom). Em Administração → Cardápio, a
+linha de cada categoria escolhe de uma vez para onde vai a categoria inteira (ex.:
+Pizzas → Pizzaria). Produto novo numa categoria que já existe vem com o ambiente dela.
+Pedido misto é dividido: cada ambiente vê e imprime só os itens dele.
 
-Pedido misto é dividido: o cupom da cozinha só tem os lanches, o do bar só as
-bebidas. Pedido sem nada para a cozinha (só bar ou só itens prontos) já nasce
-"pronto"; a tela da cozinha mostra só o que ela precisa preparar.
+Ambiente criado pode ser renomeado ou excluído (só sem produtos indo para ele e sem
+pedidos na fila dele); cozinha e bar não são excluídos, só desligados.
 
-**Como saem os pedidos** (Configurações → "Cozinha e bar: como saem os pedidos"): para
-a cozinha e para o bar, o administrador escolhe **tela**, **impressora** ou os dois.
-Com tela, cada um marca "pronto" na sua parte e o pedido só fica pronto (e vai para o
-painel) quando todos terminarem. Sem tela, aquele lugar só imprime e não segura o
-pedido (e a aba dele some). Sem tela e sem impressora, a configuração avisa.
+**Logo do estabelecimento** (Configurações → Estabelecimento → 📤 Enviar logo): aparece
+junto do nome nas abas do programa, no login, no painel da TV (grande, quando não há
+fotos), no cardápio do QR code e nos QR codes impressos.
 
 ## Histórico (auditoria)
 

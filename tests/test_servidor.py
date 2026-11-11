@@ -430,7 +430,7 @@ def test_itens_sem_preparo_nao_vao_para_a_impressora_da_cozinha(ambiente, admin,
     so_lata = admin.post("/api/pedidos", json={"itens": [{"produto_id": lata["id"]}]}).get_json()["pedido"]
     assert so_lata["status"] == "pronto" and so_lata["impressao"] == ""
     r = admin.post(f"/api/pedidos/{so_lata['id']}/imprimir")
-    assert r.status_code == 400 and "nada para a cozinha" in r.get_json()["erro"]
+    assert r.status_code == 400 and "nada para preparar" in r.get_json()["erro"]
     misto = admin.post("/api/pedidos", json={"itens": [{"produto_id": lata["id"]}, {"produto_id": burger["id"]}]}).get_json()["pedido"]
     assert misto["status"] == "novo" and misto["impressao"] == "ok"
     cupom = impressora_falsa.esperar()[0]
@@ -877,3 +877,124 @@ def test_cozinha_so_com_impressora_nao_segura_o_pedido(ambiente, admin):
     admin.put("/api/config", json={"tela_cozinha": True})
     pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
     assert pedido["status"] == "novo" and pedido["preparo"] == {"cozinha": "novo"}
+
+
+# --- Ambientes criados pelo administrador, logo e app do garçom -------------------
+
+def test_admin_cria_ambiente_com_tela_e_impressora(ambiente, admin, impressora_falsa):
+    app, banco, _ = ambiente
+    r = admin.post("/api/ambientes", json={"nome": "Pizzaria", "icone": "🍕"})
+    assert r.status_code == 200, r.get_json()
+    amb = r.get_json()["ambiente"]
+    assert amb["chave"] == "pizzaria" and amb["tela"] is True and amb["fixo"] is False
+    # nome repetido e nome que viraria uma tela do programa
+    assert admin.post("/api/ambientes", json={"nome": "pizzaria"}).status_code == 400
+    assert admin.post("/api/ambientes", json={"nome": "Caixa"}).get_json()["ambiente"]["chave"] == "caixa2"
+    assert admin.post("/api/ambientes", json={"nome": ""}).status_code == 400
+
+    # tela e impressora pela mesma configuração dos outros ambientes
+    assert admin.put("/api/config", json={"impressora_pizzaria_ativa": True, "impressora_pizzaria_host": "127.0.0.1",
+                                          "impressora_pizzaria_porta": impressora_falsa.porta}).status_code == 200
+    pizza = admin.post("/api/produtos", json={"nome": "Calabresa", "preco_centavos": 4500, "categoria": "Pizzas",
+                                              "destino": "pizzaria"}).get_json()["produto"]
+    assert pizza["destino"] == "pizzaria"
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": pizza["id"]}]}).get_json()["pedido"]
+    assert pedido["status"] == "novo" and pedido["preparo"] == {"pizzaria": "novo"} and pedido["setores"] == ["pizzaria"]
+    cupom = impressora_falsa.esperar()[0]
+    assert b"PEDIDO PIZZARIA" in cupom and b"Calabresa" in cupom
+
+    # a aba e a tela do ambiente
+    area = admin.get("/area").data.decode()
+    assert 'data-aba="pizzaria"' in area and 'data-url="/preparo/pizzaria"' in area
+    tela = admin.get("/preparo/pizzaria")
+    assert tela.status_code == 200 and "🍕 Pizzaria" in tela.data.decode() and 'data-setor="pizzaria"' in tela.data.decode()
+    assert admin.get("/preparo/naoexiste").status_code == 404
+    assert "Pizzaria" in admin.get("/admin").data.decode()
+
+    # a pizzaria marca pronto
+    r = admin.post(f"/api/pedidos/{pedido['id']}/status", json={"status": "pronto", "setor": "pizzaria"})
+    assert r.get_json()["pedido"]["status"] == "pronto"
+
+    # não exclui enquanto houver produto indo para ele; cozinha e bar nunca
+    assert "Calabresa" not in admin.delete("/api/ambientes/pizzaria").get_json()["erro"]
+    assert admin.delete("/api/ambientes/pizzaria").status_code == 400
+    assert admin.delete("/api/ambientes/cozinha").status_code == 400
+    admin.post("/api/produtos/categoria-destino", json={"categoria": "Pizzas", "destino": "cozinha"})
+    assert admin.put("/api/ambientes/pizzaria", json={"nome": "Forno", "icone": "🔥"}).get_json()["ambiente"]["nome"] == "Forno"
+    assert admin.delete("/api/ambientes/pizzaria").status_code == 200
+    assert 'data-aba="pizzaria"' not in admin.get("/area").data.decode()
+    acoes = [a["acao"] for a in banco.listar_auditoria("2000-01-01", "2100-01-01")]
+    assert {"Criou ambiente", "Renomeou ambiente", "Excluiu ambiente"} <= set(acoes)
+
+
+def test_so_o_admin_mexe_nos_ambientes(ambiente, admin):
+    app, _, _ = ambiente
+    criar_usuario(admin, "caixa", ["pedidos", "receber"])
+    caixa = entrar(app, "caixa")
+    assert caixa.post("/api/ambientes", json={"nome": "Pizzaria"}).status_code == 403
+
+
+def test_logo_do_estabelecimento(ambiente, admin):
+    app, banco, pasta = ambiente
+    anonimo = app.test_client()
+    assert anonimo.get("/logo.png").status_code == 404
+    assert b'class="logo-loja"' not in admin.get("/area").data
+    r = admin.post("/api/config/logo", data={"arquivo": (_imagem("JPEG", (2000, 1000), "RGB"), "logo.jpg")},
+                   content_type="multipart/form-data")
+    assert r.status_code == 200, r.get_json()
+    url = r.get_json()["logo_url"]
+    assert url.startswith("/logo.png?v=")
+    img = Image.open(io.BytesIO(anonimo.get("/logo.png").data))
+    assert img.format == "PNG" and max(img.size) <= 600
+    # aparece junto do nome: abas, login, painel da TV, cardápio do QR code, QR codes impressos
+    assert url in admin.get("/area").data.decode()
+    assert url in anonimo.get("/login").data.decode()
+    assert url in anonimo.get("/painel").data.decode()
+    mesa = banco.criar_mesa("1")
+    assert url in anonimo.get(f"/m/{mesa['token']}").data.decode()
+    assert url in admin.get("/admin/qrcodes").data.decode()
+    assert admin.post("/api/config/logo", data={"arquivo": (io.BytesIO(b"nao e imagem"), "x.png")},
+                      content_type="multipart/form-data").status_code == 400
+    assert admin.delete("/api/config/logo").status_code == 200
+    assert anonimo.get("/logo.png").status_code == 404 and url not in anonimo.get("/login").data.decode()
+
+
+def test_app_do_garcom_so_abre_a_tela_do_garcom(ambiente, admin):
+    app, _, _ = ambiente
+    criar_usuario(admin, "bruno", ["garcom"])
+    celular = app.test_client()
+    celular.environ_base["HTTP_USER_AGENT"] = "Mozilla/5.0 (Linux; Android 15) TorresGarcomApp/3.2.0"
+    assert celular.post("/login", data={"usuario": "bruno", "senha": "1234"}).status_code == 302
+    for caminho in ("/", "/area", "/area?tela=painel", "/painel", "/caixa", "/cozinha"):
+        r = celular.get(caminho)
+        assert r.status_code == 302 and r.headers["Location"] == "/garcom", caminho
+    pagina = celular.get("/garcom").data.decode()
+    assert 'href="/sair"' in pagina and 'href="/">Início' not in pagina
+    assert celular.get("/api/estado").status_code == 200
+    # no navegador comum continua tudo igual
+    assert 'href="/">Início' in entrar(app, "bruno").get("/garcom").data.decode()
+
+
+def test_pedido_reenviado_pela_contingencia_nao_duplica(ambiente, admin, impressora_falsa):
+    """O celular guarda o pedido feito sem Wi-Fi e reenvia; se o mesmo pedido
+    chegar de novo (resposta perdida no caminho), não lança nem imprime de novo."""
+    app, banco, _ = ambiente
+    _ligar_impressora(banco, "cozinha", impressora_falsa)
+    criar_usuario(admin, "bruno", ["garcom"])
+    garcom = entrar(app, "bruno")
+    p = _produto(admin)
+    import time as _t
+    corpo = {"origem": "garcom", "mesa": "7", "itens": [{"produto_id": p["id"], "quantidade": 2}],
+             "id_cliente": "abc-123", "feito_em": _t.time() - 600}
+    r1 = garcom.post("/api/pedidos", json=corpo).get_json()
+    r2 = garcom.post("/api/pedidos", json=corpo).get_json()
+    assert r1["ok"] and r2["ok"] and r2["ja_existia"] is True
+    assert r1["pedido"]["id"] == r2["pedido"]["id"]
+    assert len([x for x in banco.listar_pedidos() if x["mesa"] == "7"]) == 1
+    assert len(impressora_falsa.esperar()) == 1
+    _t.sleep(0.5)
+    assert len(impressora_falsa.recebidos) == 1  # reenvio não imprime de novo
+    lancou = [a for a in banco.listar_auditoria("2000-01-01", "2100-01-01") if a["acao"] == "Lançou pedido"]
+    assert len(lancou) == 1 and "feito sem Wi-Fi às" in lancou[0]["detalhes"]
+    # outro código = outro pedido
+    assert garcom.post("/api/pedidos", json={**corpo, "id_cliente": "abc-124"}).get_json()["pedido"]["id"] != r1["pedido"]["id"]

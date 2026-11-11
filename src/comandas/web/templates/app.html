@@ -21,7 +21,7 @@
 <body>
   <main>
     <h1>📱 App do garçom</h1>
-    <p class="dica">{{ loja }} · funciona pelo Wi-Fi da loja, sem internet</p>
+    <p class="dica">{% if logo_url %}<img class="logo-loja" src="{{ logo_url }}" alt="">{% endif %}{{ loja }} · funciona pelo Wi-Fi da loja, sem internet</p>
     {% if app_info %}
     <div class="passo"><span class="n">1</span><div>
       <strong>Baixe e instale o app</strong>

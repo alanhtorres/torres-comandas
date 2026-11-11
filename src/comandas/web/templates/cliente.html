@@ -10,7 +10,7 @@
 <body data-token="{{ token }}">
   <header class="cab">
     <div>
-      <h1 id="loja">Cardápio</h1>
+      <h1>{% if logo_url %}<img class="logo-loja" src="{{ logo_url }}" alt="">{% endif %}<span id="loja">Cardápio</span></h1>
       <div id="mesa" class="mesa"></div>
     </div>
   </header>

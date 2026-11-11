@@ -21,6 +21,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -73,9 +74,11 @@ class MainActivity : Activity() {
         CookieManager.getInstance().setAcceptCookie(true)
 
         val raiz = FrameLayout(this)
+        raiz.setBackgroundColor(Telas.FUNDO)
         raiz.addView(web, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         raiz.addView(montarSemConexao())
         setContentView(raiz)
+        Telas.respeitarBarras(this, raiz)
 
         if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) carregar(intent.getStringExtra("aba"))
         pedirNotificacoes()
@@ -205,11 +208,42 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    /**
+     * Contingência: sem Wi-Fi, a tela do garçom vem da cópia guardada no
+     * celular e as chamadas ao sistema respondem "sem conexão" na hora (a
+     * página guarda os pedidos na fila dela). Volta sozinho quando o sistema
+     * responder de novo.
+     */
+    @Volatile private var semRede = false
+
+    private fun entrarSemRede() {
+        semRede = true
+        esconderSemConexao()
+        web.loadUrl("$servidor/garcom")
+        Thread {
+            while (semRede && !isFinishing) {
+                Thread.sleep(5000)
+                val atual = servidor ?: break
+                if (Rede.identificar(atual) != null) semRede = false
+            }
+        }.start()
+    }
+
+    private val PAGINAS_DO_APP = listOf("/garcom", "/login", "/sair", "/primeiro-acesso", "/app")
+
     private inner class Navegador : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val destino = request.url
             val base = Uri.parse(servidor ?: return false)
-            if (destino.host == base.host && destino.port == base.port) return false
+            if (destino.host == base.host && destino.port == base.port) {
+                // Dentro do app só existe a tela do garçom (e o login): o
+                // "Início", as abas e o painel não abrem aqui.
+                val caminho = destino.path ?: ""
+                val permitido = PAGINAS_DO_APP.any { caminho == it || caminho.startsWith("$it/") }
+                if (permitido) return false
+                view.loadUrl("${servidor}/garcom")
+                return true
+            }
             // Links de fora do sistema (WhatsApp, sites): abre no app certo.
             try {
                 startActivity(Intent(Intent.ACTION_VIEW, destino))
@@ -219,15 +253,38 @@ class MainActivity : Activity() {
             return true
         }
 
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+            if (!semRede) return null
+            val base = Uri.parse(servidor ?: return null)
+            val destino = request.url
+            if (destino.host != base.host || destino.port != base.port) return null
+            val caminho = destino.path ?: ""
+            if (caminho.startsWith("/api/")) {
+                return WebResourceResponse("application/json", "utf-8", 503, "Sem conexao",
+                    mapOf("Cache-Control" to "no-store"),
+                    "{\"ok\":false,\"erro\":\"Sem conexão com o sistema\"}".toByteArray().inputStream())
+            }
+            val arquivo = CopiaOffline.arquivo(this@MainActivity, caminho) ?: return null
+            return WebResourceResponse(CopiaOffline.tipo(caminho), "utf-8", arquivo.inputStream())
+        }
+
         override fun onPageFinished(view: WebView, url: String) {
             guardarLogin()
+            // Com conexão, guarda a cópia da tela para usar longe do Wi-Fi.
+            val atual = servidor
+            if (!semRede && atual != null && Uri.parse(url).path?.trimEnd('/') == "/garcom") {
+                CopiaOffline.atualizar(this@MainActivity, atual, CookieManager.getInstance().getCookie(atual),
+                    view.settings.userAgentString)
+            }
             // Na tela do garçom, esquece o caminho até ela (ex.: o login):
             // o botão voltar não deve levar de volta para a tela de entrar.
             if (Uri.parse(url).path?.trimEnd('/') == "/garcom") view.clearHistory()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame) mostrarSemConexao()
+            if (!request.isForMainFrame) return
+            // Sem Wi-Fi: abre a cópia guardada da tela do garçom (contingência).
+            if (!semRede && CopiaOffline.temCopia(this@MainActivity)) entrarSemRede() else mostrarSemConexao()
         }
     }
 

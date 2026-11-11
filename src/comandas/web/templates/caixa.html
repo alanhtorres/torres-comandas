@@ -12,7 +12,7 @@
       data-pode-caixa="{{ pode('caixa')|int }}" data-pode-cancelar="{{ pode('cancelar')|int }}" data-pode-estornar="{{ pode('estornar')|int }}">
   <div id="sem-conexao" hidden>Sem conexão com o servidor — tentando novamente...</div>
   <header class="topo">
-    <h1>🧾 Caixa <span id="nome-loja" style="color: var(--texto-2); font-weight: 400"></span></h1>
+    <h1>🧾 Caixa {% if logo_url %}<img class="logo-loja" src="{{ logo_url }}" alt="">{% endif %}<span id="nome-loja" style="color: var(--texto-2); font-weight: 400"></span></h1>
     <span class="espaco"></span>
     <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong> <a href="/sair">trocar usuário</a></span>
     <nav>

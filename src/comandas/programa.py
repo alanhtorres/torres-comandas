@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import __version__, descoberta
-from .maquina import TELAS, Maquina
+from .maquina import CHAVE_TELA, TELAS, Maquina
 
 log = logging.getLogger("comandas")
 
@@ -113,7 +113,7 @@ class Api:
 
     def configurar(self, tela: str, tela_cheia: bool) -> dict:
         m = self._p.maquina
-        m.tela = tela if tela in TELAS else ""
+        m.tela = tela if tela in TELAS or CHAVE_TELA.match(str(tela or "")) else ""
         mudou_cheia = bool(tela_cheia) != m.tela_cheia
         m.tela_cheia = bool(tela_cheia)
         self._p.salvar()

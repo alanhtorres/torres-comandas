@@ -10,7 +10,8 @@
 </head>
 <body>
   <header class="barra-abas">
-    <strong class="marca">{{ loja }}</strong>
+    <strong class="marca">{% if logo_url %}<img class="logo-loja" src="{{ logo_url }}" alt="">{% endif %}<span>{{ loja }}</span></strong>
+    {% if logo_url %}<img class="logo-loja logo-estreito" src="{{ logo_url }}" alt="{{ loja }}" title="{{ loja }}">{% endif %}
     <nav id="abas" role="tablist">
       {% for a in abas %}
       <button role="tab" data-aba="{{ a.chave }}" data-url="{{ a.url }}" title="{{ a.nome }}"><span class="icone">{{ a.icone }}</span><span class="nome">{{ a.nome }}</span></button>

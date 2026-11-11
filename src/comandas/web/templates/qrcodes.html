@@ -6,6 +6,7 @@
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; color: #111; background: #fff; }
     .barra { margin-bottom: 16px; }
+    .logo-qr { max-height: 56px; max-width: 160px; object-fit: contain; }
     .folha { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .qr { border: 2px dashed #bbb; border-radius: 12px; padding: 14px; text-align: center; break-inside: avoid; }
     .qr img { width: 100%; max-width: 200px; }
@@ -23,6 +24,7 @@
   <div class="folha">
     {% for mesa in mesas %}
     <div class="qr">
+      {% if logo_url %}<img class="logo-qr" src="{{ logo_url }}" alt="">{% endif %}
       <p><strong>{{ loja }}</strong></p>
       <img src="/qrcode/mesa/{{ mesa.id }}.svg" alt="QR code da mesa {{ mesa.numero }}">
       <h2>Mesa {{ mesa.numero }}</h2>

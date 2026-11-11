@@ -10,6 +10,7 @@
   <style>
     main { max-width: 360px; margin: 10vh auto; padding: 0 16px; }
     h1 { text-align: center; margin: 0 0 4px; }
+    .logo-login { display: block; max-width: 220px; max-height: 120px; margin: 0 auto 12px; object-fit: contain; }
     p.sub { text-align: center; color: var(--texto-2); margin: 0 0 12px; }
     input { font-size: 1.15rem; }
     button { width: 100%; margin-top: 16px; }
@@ -21,6 +22,7 @@
 </head>
 <body>
   <main class="cartao">
+    {% if logo_url %}<img class="logo-login" src="{{ logo_url }}" alt="">{% endif %}
     <h1>{{ loja }}</h1>
     <p class="sub">Acesso da equipe</p>
     {% if aviso and not erro %}<p class="aviso-saida">{{ aviso }}</p>{% endif %}

@@ -2,6 +2,8 @@
   "use strict";
   const { api, moeda, el, aviso, dialogo, dataHora, hojeISO, formCliente, preencherMensagem, abrirWhatsapp } = window.C;
   const $ = (id) => document.getElementById(id);
+  // Ambientes de preparo (cozinha, bar e os criados pelo administrador).
+  const AMBIENTES = JSON.parse(($("dados-ambientes") || {}).textContent || "[]");
 
   // --- Abas -------------------------------------------------------------------
 
@@ -88,16 +90,16 @@
       if (destinos.size === 1) $("produto-destino").value = [...destinos][0];
     });
 
-    const DESTINOS = { cozinha: "Cozinha", bar: "Bar", nenhum: "Nenhuma (já pronto)" };
-    const ETIQUETAS = {
-      cozinha: () => el("span", { class: "etiqueta preparando" }, "👨‍🍳 cozinha"),
-      bar: () => el("span", { class: "etiqueta pronto" }, "🍹 bar"),
-      nenhum: () => el("span", { class: "etiqueta" }, "só caixa"),
-    };
+    const DESTINOS = {};
+    for (const a of AMBIENTES) DESTINOS[a.chave] = a.icone + " " + a.nome;
+    DESTINOS.nenhum = "Nenhum lugar (já pronto)";
+    const etiqueta = (destino) => destino === "nenhum"
+      ? el("span", { class: "etiqueta" }, "só caixa")
+      : el("span", { class: "etiqueta " + (destino === "cozinha" ? "preparando" : "pronto") }, DESTINOS[destino] || destino);
 
     function escolhaCategoria(cat, daCategoria) {
       const destinos = new Set(daCategoria.map((x) => x.destino));
-      const sel = el("select", { class: "destino-categoria", title: "Em qual impressora saem todos os produtos desta categoria" },
+      const sel = el("select", { class: "destino-categoria", title: "Para qual ambiente vão todos os produtos desta categoria" },
         destinos.size > 1 ? el("option", { value: "" }, "Misturado (cada produto o seu)") : null,
         ...Object.entries(DESTINOS).map(([valor, rotulo]) => el("option", { value: valor }, rotulo)));
       sel.value = destinos.size > 1 ? "" : [...destinos][0];
@@ -105,11 +107,11 @@
         if (!sel.value) return;
         try {
           await api("POST", "/api/produtos/categoria-destino", { categoria: cat, destino: sel.value });
-          aviso(`Todos os produtos de "${cat}" saem em: ${DESTINOS[sel.value]}`, "ok");
+          aviso(`Todos os produtos de "${cat}" vão para: ${DESTINOS[sel.value]}`, "ok");
         } catch (e) { aviso(e.message, "erro"); }
         carregarProdutos();
       });
-      return el("label", { class: "inline" }, "Sai na impressora: ", sel);
+      return el("label", { class: "inline" }, "Vai para: ", sel);
     }
 
     async function carregarProdutos() {
@@ -135,7 +137,7 @@
             el("td", {}, el("strong", {}, p.nome), p.descricao ? el("div", { class: "dica" }, p.descricao) : null),
             el("td", {}, moeda(p.preco_centavos)),
             el("td", {}, p.ativo ? null : el("span", { class: "etiqueta" }, "indisponível"), " ",
-              ETIQUETAS[p.destino]()),
+              etiqueta(p.destino)),
             el("td", { class: "acoes" },
               inputFoto,
               el("button", { title: "Trocar foto", onclick: () => inputFoto.click() }, "📷"),
@@ -285,6 +287,35 @@
     }
     document.querySelectorAll("[data-tipo-impressora]").forEach((s) => s.addEventListener("change", mostrarTipoImpressora));
 
+    // Logo do estabelecimento: enviada na hora (não precisa "Salvar configurações").
+    if ($("enviar-logo")) {
+      $("enviar-logo").addEventListener("click", () => $("arquivo-logo").click());
+      $("arquivo-logo").addEventListener("change", async (e) => {
+        const arquivo = e.target.files[0];
+        if (!arquivo) return;
+        const corpo = new FormData();
+        corpo.append("arquivo", arquivo);
+        try {
+          const r = await fetch("/api/config/logo", { method: "POST", body: corpo });
+          const dados = await r.json();
+          if (!r.ok || !dados.ok) throw new Error(dados.erro || "Não foi possível enviar a logo.");
+          $("previa-logo").replaceChildren(el("img", { src: dados.logo_url, alt: "Logo" }));
+          $("remover-logo").hidden = false;
+          aviso("Logo atualizada. As outras telas mostram a nova ao recarregar.", "ok");
+        } catch (err) { aviso(err.message, "erro"); }
+        e.target.value = "";
+      });
+      $("remover-logo").addEventListener("click", async () => {
+        if (!confirm("Remover a logo? Fica só o nome do estabelecimento.")) return;
+        try {
+          await api("DELETE", "/api/config/logo");
+          $("previa-logo").replaceChildren(el("span", {}, "Sem logo"));
+          $("remover-logo").hidden = true;
+          aviso("Logo removida", "ok");
+        } catch (err) { aviso(err.message, "erro"); }
+      });
+    }
+
     // Cozinha ou bar sem tela e sem impressora: avisa (ninguém ficaria sabendo do pedido).
     function avisarSetores() {
       for (const aviso of document.querySelectorAll("[data-aviso-setor]")) {
@@ -295,6 +326,39 @@
       }
     }
     document.querySelectorAll("[data-setor-tela], [name$='_ativa']").forEach((c) => c.addEventListener("change", avisarSetores));
+
+    // Ambientes novos (pizzaria, confeitaria...): o administrador cria, renomeia e exclui.
+    const ICONES = ["🍕", "🍰", "🥩", "🍣", "🍔", "🥗", "🍜", "🍦", "☕", "🍺", "🥤", "🔥", "🍽️"];
+    function formAmbiente(nome, icone) {
+      const campoNome = el("input", { maxlength: 30, value: nome || "", placeholder: "Ex.: Pizzaria" });
+      const campoIcone = el("select", {}, ...ICONES.map((i) => el("option", { value: i }, i)));
+      campoIcone.value = ICONES.includes(icone) ? icone : "🍽️";
+      return { campoNome, campoIcone, corpo: el("div", {}, el("label", {}, "Nome do ambiente"), campoNome,
+        el("label", {}, "Ícone"), campoIcone,
+        el("p", { class: "dica" }, "Depois escolha se ele tem tela e/ou impressora, e no Cardápio quais produtos vão para ele.")) };
+    }
+    async function salvarERecarregar(acao) {
+      await salvarConfig();  // não perde o que já foi mudado nesta página
+      await acao();
+      location.reload();
+    }
+    const botaoNovo = $("novo-ambiente");
+    if (botaoNovo) botaoNovo.addEventListener("click", () => {
+      const f = formAmbiente("", "🍽️");
+      dialogo({ titulo: "➕ Novo ambiente", corpo: f.corpo, confirmar: "Criar",
+        aoConfirmar: () => salvarERecarregar(() => api("POST", "/api/ambientes", { nome: f.campoNome.value, icone: f.campoIcone.value })) });
+      setTimeout(() => f.campoNome.focus(), 50);
+    });
+    document.querySelectorAll("[data-renomear-ambiente]").forEach((b) => b.addEventListener("click", () => {
+      const f = formAmbiente(b.dataset.nome, b.dataset.icone);
+      dialogo({ titulo: "✏️ Renomear ambiente", corpo: f.corpo, confirmar: "Salvar",
+        aoConfirmar: () => salvarERecarregar(() => api("PUT", "/api/ambientes/" + b.dataset.renomearAmbiente,
+          { nome: f.campoNome.value, icone: f.campoIcone.value })) });
+    }));
+    document.querySelectorAll("[data-excluir-ambiente]").forEach((b) => b.addEventListener("click", () => {
+      if (!confirm(`Excluir o ambiente "${b.dataset.nome}"? A tela e a impressora dele deixam de existir.`)) return;
+      salvarERecarregar(() => api("DELETE", "/api/ambientes/" + b.dataset.excluirAmbiente)).catch((e) => aviso(e.message, "erro"));
+    }));
 
     async function carregarConfig() {
       const { config, url_base_detectada } = await api("GET", "/api/config");

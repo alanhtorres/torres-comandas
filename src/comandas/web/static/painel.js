@@ -82,7 +82,9 @@
     clearTimeout(timer);
     const vitrine = $("vitrine");
     if (!itens.length) {
-      vitrine.replaceChildren(el("div", { class: "sem-midia" }, $("loja").textContent || ""));
+      const logo = document.querySelector("aside header .logo-loja");
+      vitrine.replaceChildren(el("div", { class: "sem-midia" },
+        logo ? el("img", { class: "logo-vitrine", src: logo.src, alt: "" }) : null, el("div", {}, $("loja").textContent || "")));
       timer = setTimeout(proximo, 10000);
       return;
     }

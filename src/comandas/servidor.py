@@ -65,6 +65,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     app.json.sort_keys = False
 
     pasta_fotos = pasta_dados / "fotos"
+    arquivo_logo = pasta_dados / "logo.png"
     pasta_midias = pasta_dados / "midias"
     pasta_fotos.mkdir(parents=True, exist_ok=True)
     pasta_midias.mkdir(parents=True, exist_ok=True)
@@ -176,10 +177,29 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             return envoltorio
         return decorador
 
+    # --- App Android do garçom: só a tela do garçom ---------------------------
+    # O app se identifica no User-Agent. Dentro dele não existem as outras telas
+    # (início, abas, painel...): qualquer página que não seja a do garçom (ou o
+    # login) volta para ela. Vale também para o app antigo já instalado.
+    PAGINAS_DO_APP = ("/garcom", "/login", "/sair", "/primeiro-acesso", "/static/", "/api/", "/foto/", "/midia/", "/logo.png", "/app")
+
+    def no_app_garcom() -> bool:
+        return "TorresGarcomApp" in request.headers.get("User-Agent", "")
+
+    @app.before_request
+    def app_garcom_so_na_tela_do_garcom():
+        if no_app_garcom() and request.method == "GET" and not request.path.startswith(PAGINAS_DO_APP):
+            return redirect("/garcom")
+
     @app.context_processor
     def contexto_templates():
         cfg = banco.config()
-        return {"usuario": usuario_atual(), "pode": pode, "loja": cfg["nome_loja"], "tema": cfg["tema_padrao"]}
+        return {"usuario": usuario_atual(), "pode": pode, "loja": cfg["nome_loja"], "tema": cfg["tema_padrao"],
+                "logo_url": url_logo(cfg), "no_app": no_app_garcom()}
+
+    def url_logo(cfg: dict) -> Optional[str]:
+        """Endereço da logo (muda a cada envio, para as telas buscarem a nova)."""
+        return f"/logo.png?v={cfg['logo_versao']}" if cfg["logo_versao"] and arquivo_logo.is_file() else None
 
     # --- Login ---------------------------------------------------------------
 
@@ -291,14 +311,17 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         if pode("garcom"):
             abas.append(("garcom", "🛎️", "Garçom"))
         if pode("cozinha"):
-            if cfg["tela_cozinha"]:
-                abas.append(("cozinha", "👨‍🍳", "Cozinha"))
-            if cfg["tela_bar"]:
-                abas.append(("bar", "🍹", "Bar"))
+            for amb in banco.ambientes():
+                if amb["tela"]:
+                    abas.append((amb["chave"], amb["icone"], amb["nome"]))
         abas.append(("painel", "📺", "Painel (TV)"))
         if pode(*PERMISSOES_ADMIN):
             abas.append(("admin", "⚙️", "Administração"))
-        return [{"chave": c, "icone": i, "nome": n, "url": "/" + c} for c, i, n in abas]
+        return [{"chave": c, "icone": i, "nome": n, "url": url_da_tela(c)} for c, i, n in abas]
+
+    def url_da_tela(chave: str) -> str:
+        fixas = {"caixa", "comandas", "garcom", "cozinha", "bar", "painel", "admin"}
+        return "/" + chave if chave in fixas else "/preparo/" + chave
 
     @app.get("/area")
     @exigir()
@@ -316,13 +339,25 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @app.get("/cozinha")
     @exigir("cozinha")
     def tela_cozinha():
-        return render_template("cozinha.html", setor="cozinha")
+        return tela_de_preparo("cozinha")
+
+    def tela_de_preparo(chave: str):
+        amb = banco.ambiente(chave)
+        if not amb:
+            abort(404)
+        return render_template("cozinha.html", setor=chave, ambiente=amb)
+
+    @app.get("/preparo/<chave>")
+    @exigir("cozinha")
+    def tela_preparo(chave):
+        """Tela de um ambiente criado pelo administrador (pizzaria, confeitaria...)."""
+        return tela_de_preparo(chave)
 
     @app.get("/bar")
     @exigir("cozinha")
     def tela_bar():
         """Tela de preparo do bar: igual à da cozinha, com os produtos do bar."""
-        return render_template("cozinha.html", setor="bar")
+        return tela_de_preparo("bar")
 
     @app.get("/garcom")
     @exigir("garcom")
@@ -338,7 +373,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @exigir(*PERMISSOES_ADMIN)
     def tela_admin():
         return render_template("admin.html", url_base=url_base(), ip_principal=ip_para_digitar(),
-                               app_disponivel=info_app() is not None)
+                               app_disponivel=info_app() is not None, ambientes=banco.ambientes())
 
     @app.get("/painel")
     def tela_painel():
@@ -403,6 +438,40 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
 
     # --- Arquivos ------------------------------------------------------------
 
+    @app.get("/logo.png")
+    def logo():
+        """Pública: aparece no login, no painel da TV e no cardápio do QR code."""
+        if not arquivo_logo.is_file():
+            abort(404)
+        return send_file(arquivo_logo, mimetype="image/png", max_age=86400)
+
+    @app.post("/api/config/logo")
+    @exigir("configuracoes")
+    def api_enviar_logo():
+        enviado = request.files.get("arquivo")
+        if not enviado or not enviado.filename:
+            raise ErroNegocio("Escolha a imagem da logo.")
+        try:
+            img = ImageOps.exif_transpose(Image.open(enviado.stream))
+        except (UnidentifiedImageError, OSError):
+            raise ErroNegocio("Arquivo de imagem inválido (use PNG ou JPG).")
+        img = img.convert("RGBA")  # PNG: mantém o fundo transparente
+        img.thumbnail((600, 600))
+        temporario = arquivo_logo.with_suffix(".tmp")
+        img.save(temporario, "PNG", optimize=True)
+        temporario.replace(arquivo_logo)
+        banco.salvar_config({"logo_versao": int(time.time())}, por=ator())
+        banco.registrar_acao(ator(), "Trocou a logo do estabelecimento")
+        return jsonify({"ok": True, "logo_url": url_logo(banco.config())})
+
+    @app.delete("/api/config/logo")
+    @exigir("configuracoes")
+    def api_remover_logo():
+        arquivo_logo.unlink(missing_ok=True)
+        banco.salvar_config({"logo_versao": 0}, por=ator())
+        banco.registrar_acao(ator(), "Removeu a logo do estabelecimento")
+        return jsonify({"ok": True})
+
     @app.get("/foto/<nome>")
     def foto(nome):
         return send_from_directory(pasta_fotos, nome, max_age=3600)
@@ -441,8 +510,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             "recebimentos": [],
             "formas": FORMAS_PAGAMENTO,
             "taxa_servico_percentual": cfg["taxa_servico_percentual"],
-            "impressora_cozinha_ativa": cfg["impressora_cozinha_ativa"],
-            "impressora_bar_ativa": cfg["impressora_bar_ativa"],
+            **{f"impressora_{a['chave']}_ativa": a["impressora_ativa"] for a in banco.ambientes()},
+            "ambientes": {a["chave"]: a["nome"] for a in banco.ambientes()},
             "impressora_caixa_ativa": cfg["impressora_caixa_ativa"],
             "pode_abrir_comanda": pode("comandas"),
         }
@@ -458,7 +527,13 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
 
     # --- Impressão (em segundo plano: impressora lenta não trava a tela) ------
 
-    NOMES_IMPRESSORA = {"cozinha": "da cozinha", "bar": "do bar", "caixa": "do caixa"}
+    def nome_impressora(qual: str) -> str:
+        """"do caixa", "da cozinha", "de Pizzaria"..."""
+        if qual == "caixa":
+            return "do caixa"
+        amb = banco.ambiente(qual)
+        nome = amb["nome"] if amb else qual
+        return {"cozinha": "da cozinha", "bar": "do bar"}.get(qual, f"de {nome}")
 
     def _em_segundo_plano(trabalho) -> None:
         if impressao_sincrona:
@@ -469,7 +544,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     def _imprimir(qual: str, gerar, ao_terminar=None) -> None:
         cfg = banco.config()
         if not cfg[f"impressora_{qual}_ativa"]:
-            raise ErroNegocio(f"A impressora {NOMES_IMPRESSORA[qual]} está desligada nas configurações.")
+            raise ErroNegocio(f"A impressora {nome_impressora(qual)} está desligada nas configurações.")
 
         def trabalho():
             try:
@@ -489,15 +564,15 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         if not pedido["setores"]:
             if automatico:
                 return False
-            raise ErroNegocio("Esse pedido não tem nada para a cozinha nem para o bar.")
+            raise ErroNegocio("Esse pedido não tem nada para preparar (cozinha, bar ou outro ambiente).")
         cfg = banco.config()
-        setores = [s for s in pedido["setores"] if cfg[f"impressora_{s}_ativa"]]
+        setores = [s for s in pedido["setores"] if cfg.get(f"impressora_{s}_ativa")]
         if not setores:
             if automatico:
                 return False
             if len(pedido["setores"]) == 1:
-                raise ErroNegocio(f"A impressora {NOMES_IMPRESSORA[pedido['setores'][0]]} está desligada nas configurações.")
-            raise ErroNegocio("As impressoras da cozinha e do bar estão desligadas nas configurações.")
+                raise ErroNegocio(f"A impressora {nome_impressora(pedido['setores'][0])} está desligada nas configurações.")
+            raise ErroNegocio("As impressoras dos ambientes deste pedido estão desligadas nas configurações.")
         banco.registrar_impressao(pedido["id"], "imprimindo")
 
         def trabalho():
@@ -505,7 +580,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
             for setor in setores:
                 try:
                     impressora.enviar_para(cfg, setor, impressora.cupom_cozinha(
-                        pedido, cfg["nome_loja"], cfg["impressora_colunas"], cfg["impressora_codificacao"], setor))
+                        pedido, cfg["nome_loja"], cfg["impressora_colunas"], cfg["impressora_codificacao"], setor,
+                        titulo=banco.nome_destino(setor)))
                 except impressora.ErroImpressora as exc:
                     log.warning("Falha na impressora %s: %s", setor, exc)
                     erros.append(f"{setor}: {exc}" if len(setores) > 1 else str(exc))
@@ -528,7 +604,11 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         comanda_id = dados.get("comanda_id") or None
         pedido = banco.criar_pedido(dados.get("itens"), origem=origem, mesa=dados.get("mesa", ""),
                                     cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator(),
-                                    comanda_id=comanda_id)
+                                    comanda_id=comanda_id, id_cliente=str(dados.get("id_cliente") or ""),
+                                    feito_em=dados.get("feito_em"))
+        if pedido.get("ja_existia"):
+            # Reenvio do mesmo pedido (contingência do celular): não lança nem imprime de novo.
+            return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"]), "ja_existia": True})
         _imprimir_pedido(pedido, automatico=True)
         return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"])})
 
@@ -555,7 +635,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         if not pedido:
             abort(404)
         _imprimir_pedido(pedido)
-        onde = " e ".join(NOMES_IMPRESSORA[s].split()[-1] for s in pedido["setores"])
+        onde = " e ".join(banco.nome_destino(s).lower() for s in pedido["setores"])
         banco.registrar_acao(ator(), "Reimprimiu pedido", f"Pedido nº {pedido['codigo']} ({onde})", pedido_id)
         return jsonify({"ok": True})
 
@@ -902,18 +982,42 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
     @exigir("configuracoes")
     def api_teste_impressora():
         qual = (request.get_json(silent=True) or {}).get("qual", "cozinha")
-        if qual not in NOMES_IMPRESSORA:
+        if qual != "caixa" and not banco.ambiente(qual):
             raise ErroNegocio("Impressora inválida.")
         cfg = banco.config()
         cupom = impressora.Cupom(cfg["impressora_colunas"], cfg["impressora_codificacao"])
         cupom.cmd(impressora.ALINHAR_CENTRO).linha(cfg["nome_loja"])
         cupom.cmd(impressora.TAMANHO_DUPLO).linha("TESTE OK").cmd(impressora.TAMANHO_NORMAL)
-        cupom.linha(f"Impressora {NOMES_IMPRESSORA[qual]}").linha("Acentuação: ção ã é ê ó ú ç")
+        cupom.linha(f"Impressora {nome_impressora(qual)}").linha("Acentuação: ção ã é ê ó ú ç")
         cupom.separador()
         try:
             impressora.enviar_para(cfg, qual, cupom.bytes())
         except impressora.ErroImpressora as exc:
             raise ErroNegocio(str(exc))
+        return jsonify({"ok": True})
+
+    @app.get("/api/ambientes")
+    @exigir("configuracoes", "cardapio")
+    def api_ambientes():
+        return jsonify({"ambientes": banco.ambientes()})
+
+    @app.post("/api/ambientes")
+    @exigir("configuracoes")
+    def api_criar_ambiente():
+        dados = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, "ambiente": banco.criar_ambiente(dados.get("nome", ""), dados.get("icone", ""), por=ator())})
+
+    @app.put("/api/ambientes/<chave>")
+    @exigir("configuracoes")
+    def api_atualizar_ambiente(chave):
+        dados = request.get_json(silent=True) or {}
+        return jsonify({"ok": True, "ambiente": banco.atualizar_ambiente(chave, dados.get("nome", ""), dados.get("icone", ""),
+                                                                          por=ator())})
+
+    @app.delete("/api/ambientes/<chave>")
+    @exigir("configuracoes")
+    def api_excluir_ambiente(chave):
+        banco.excluir_ambiente(chave, por=ator())
         return jsonify({"ok": True})
 
     @app.get("/api/impressoras/usb")

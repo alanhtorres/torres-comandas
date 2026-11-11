@@ -11,6 +11,7 @@ import socket
 import sys
 import unicodedata
 from datetime import datetime
+from typing import Optional
 
 from .banco import moeda, setor_do_item
 
@@ -102,10 +103,10 @@ def _hora(ts: float) -> str:
 
 
 def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: str = "cp850",
-                  setor: str = "cozinha") -> bytes:
-    """Cupom de preparo de um ambiente (cozinha ou bar): só os itens dele."""
+                  setor: str = "cozinha", titulo: Optional[str] = None) -> bytes:
+    """Cupom de preparo de um ambiente (cozinha, bar, pizzaria...): só os itens dele."""
     c = Cupom(colunas, codificacao)
-    c.cmd(ALINHAR_CENTRO).linha(nome_loja).linha(f"PEDIDO {SETORES.get(setor, setor.upper())}")
+    c.cmd(ALINHAR_CENTRO).linha(nome_loja).linha(f"PEDIDO {(titulo or SETORES.get(setor, setor)).upper()}")
     c.cmd(TAMANHO_DUPLO + NEGRITO_ON).linha(f"No {pedido['codigo']}").cmd(TAMANHO_NORMAL + NEGRITO_OFF)
     c.cmd(ALINHAR_ESQ)
     origem = {"qrcode": "QR code", "caixa": "Caixa", "garcom": "Garcom"}.get(pedido["origem"], pedido["origem"])

@@ -725,3 +725,39 @@ def test_pedidos_na_fila_antes_da_atualizacao_continuam_na_cozinha(tmp_path):
     con.close()
     banco = Banco(tmp_path / "t.db")
     assert banco.obter_pedido(p["id"])["preparo"] == {"cozinha": "novo"}
+
+
+def test_atualizacao_leva_cozinha_e_bar_antigos_para_os_ambientes(tmp_path):
+    """Banco da 3.1 (cozinha/bar na config e status_cozinha/status_bar nos
+    pedidos) abre na versão nova com as mesmas telas, impressoras e filas."""
+    import json
+    import sqlite3
+    caminho = tmp_path / "antigo.db"
+    banco = Banco(caminho)
+    ana = banco.criar_primeiro_admin({"nome": "Ana", "login": "ana", "senha": "1234"})
+    lanche = banco.criar_produto({"nome": "X", "preco_centavos": 1000})
+    chopp = banco.criar_produto({"nome": "Chopp", "preco_centavos": 900, "destino": "bar"})
+    pedido = banco.criar_pedido([{"produto_id": lanche["id"]}, {"produto_id": chopp["id"]}], por=ana)
+    banco.conn.close()
+    # volta o banco para o formato antigo
+    con = sqlite3.connect(caminho)
+    con.execute("DELETE FROM ambientes")
+    con.execute("DELETE FROM pedido_preparo")
+    con.execute("DELETE FROM config WHERE chave = 'migrou_preparo'")
+    for chave, valor in {"tela_bar": True, "tela_cozinha": True, "impressora_bar_ativa": True,
+                         "impressora_bar_host": "192.168.0.52", "impressora_bar_porta": 9101}.items():
+        con.execute("INSERT INTO config (chave, valor) VALUES (?, ?)", (chave, json.dumps(valor)))
+    con.execute("UPDATE pedidos SET status_cozinha = 'preparando', status_bar = 'novo' WHERE id = ?", (pedido["id"],))
+    con.commit()
+    con.close()
+
+    banco = Banco(caminho)
+    bar = banco.ambiente("bar")
+    assert bar["tela"] and bar["impressora_ativa"] and bar["impressora_host"] == "192.168.0.52" and bar["impressora_porta"] == 9101
+    assert banco.ambiente("cozinha")["tela"] and not banco.ambiente("cozinha")["impressora_ativa"]
+    cfg = banco.config()
+    assert cfg["tela_bar"] is True and cfg["impressora_bar_host"] == "192.168.0.52"
+    assert banco.obter_pedido(pedido["id"])["preparo"] == {"cozinha": "preparando", "bar": "novo"}
+    # abrir de novo não repete a migração
+    Banco(caminho)
+    assert banco.obter_pedido(pedido["id"])["preparo"] == {"cozinha": "preparando", "bar": "novo"}

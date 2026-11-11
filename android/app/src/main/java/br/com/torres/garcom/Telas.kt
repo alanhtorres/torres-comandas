@@ -1,6 +1,10 @@
 package br.com.torres.garcom
 
+import android.app.Activity
 import android.content.Context
+import android.os.Build
+import android.view.View
+import android.view.WindowInsets
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
@@ -16,6 +20,24 @@ object Telas {
     const val TEXTO_2 = 0xFF94A3B8.toInt()
     const val DESTAQUE = 0xFF38BDF8.toInt()
     const val VERDE = 0xFF22C55E.toInt()
+
+    /**
+     * Mantém a tela do app entre a barra de cima (relógio, bateria) e a de
+     * baixo (voltar, início) e acima do teclado. No Android 15 o app ocupa a
+     * tela toda, por baixo das barras, e os botões da página ficavam tapados.
+     * Do Android 11 em diante o app sempre cuida disso (igual em todos); nos
+     * mais antigos o próprio Android já deixa o espaço das barras.
+     */
+    fun respeitarBarras(activity: Activity, raiz: View) {
+        if (Build.VERSION.SDK_INT < 30) return
+        activity.window.setDecorFitsSystemWindows(false)
+        raiz.setOnApplyWindowInsetsListener { v, insets ->
+            val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
+            v.setPadding(b.left, b.top, b.right, b.bottom)
+            WindowInsets.CONSUMED
+        }
+        raiz.requestApplyInsets()
+    }
 
     fun dp(ctx: Context, v: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), ctx.resources.displayMetrics).toInt()

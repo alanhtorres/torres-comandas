@@ -202,12 +202,21 @@
         el("label", {}, "Nome do cliente"), cliente, el("label", {}, "Observação para a cozinha"), obs),
       confirmar: "Enviar pedido",
       aoConfirmar: async () => {
-        const r = await api("POST", "/api/pedidos", {
+        const corpo = {
           origem: "garcom", mesa, comanda_id: comandaId,
           itens: [...carrinho].map(([id, i]) => ({ produto_id: id, quantidade: i.quantidade, observacao: i.observacao })),
           cliente: cliente.value, observacao: obs.value,
-        });
-        aviso(`Pedido nº ${r.pedido.codigo} (${destino()}) enviado` + (r.pedido.setores.length ? " para: " + r.pedido.setores.join(" e ") : " (já está pronto)"), "ok");
+          id_cliente: novoIdPedido(), feito_em: Date.now() / 1000,
+        };
+        const r = await postarPedido(corpo);
+        if (r.erro) throw new Error(r.erro);
+        if (r.pedido) {
+          aviso(`Pedido nº ${r.pedido.codigo} (${destino()}) enviado` + (r.pedido.setores.length ? " para: " + r.pedido.setores.map((s) => (estado.ambientes || {})[s] || s).join(" e ") : " (já está pronto)"), "ok");
+        } else {
+          // Sem Wi-Fi (ou sessão vencida): guarda no celular e envia quando der.
+          guardarNaFila(corpo, destino(), resumoCarrinho().total);
+          aviso(`📡 Sem conexão: pedido (${destino()}) guardado no celular. Ele é enviado sozinho quando o Wi-Fi voltar.`, "ok");
+        }
         carrinho.clear();
         mesa = "";
         comandaId = null;
@@ -221,6 +230,120 @@
       },
     });
   });
+
+  // --- Contingência: pedidos feitos sem Wi-Fi ----------------------------------
+  // Longe do Wi-Fi, o pedido fica guardado no celular (localStorage) e é
+  // enviado sozinho quando a conexão volta. Cada pedido leva um código
+  // (id_cliente): se o mesmo pedido chegar duas vezes, o sistema lança uma vez só.
+
+  const CHAVE_FILA = "garcom-fila";
+  let enviandoFila = false;
+
+  function lerFila() {
+    try { return JSON.parse(localStorage.getItem(CHAVE_FILA) || "[]"); } catch (e) { return []; }
+  }
+  function gravarFila(fila) {
+    try { localStorage.setItem(CHAVE_FILA, JSON.stringify(fila)); } catch (e) { /* sem armazenamento */ }
+    renderFila();
+  }
+  function novoIdPedido() {
+    // crypto.randomUUID só existe em https; aqui é a rede local (http).
+    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+  }
+
+  /** Envia o pedido. {pedido} = enviado; {rede} = sem conexão; {login} = sessão
+   *  vencida; {erro} = o sistema recusou (produto indisponível, comanda fechada...). */
+  async function postarPedido(corpo) {
+    const controle = new AbortController();
+    const prazo = setTimeout(() => controle.abort(), 12000);
+    let res;
+    try {
+      res = await fetch("/api/pedidos", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpo), cache: "no-store", signal: controle.signal });
+    } catch (e) {
+      return { rede: true };
+    } finally {
+      clearTimeout(prazo);
+    }
+    if (res.status === 401) return { login: true };
+    if (res.status >= 500) return { rede: true };
+    let dados;
+    try { dados = await res.json(); } catch (e) { return { rede: true }; }
+    if (!res.ok || dados.ok === false) return { erro: dados.erro || "Erro " + res.status + " no sistema." };
+    return { pedido: dados.pedido };
+  }
+
+  function guardarNaFila(corpo, onde, total) {
+    const itens = corpo.itens.map((i) => {
+      const p = produtos.find((x) => x.id === i.produto_id);
+      return i.quantidade + "× " + (p ? p.nome : "produto");
+    });
+    gravarFila([...lerFila(), { corpo, onde, total, itens, feito: Date.now(), erro: "" }]);
+  }
+
+  async function enviarFila() {
+    if (enviandoFila) return;
+    const pendentes = lerFila().filter((f) => !f.erro);
+    if (!pendentes.length) return;
+    enviandoFila = true;
+    try {
+      for (const item of pendentes) {
+        const r = await postarPedido(item.corpo);
+        if (r.rede || r.login) break;  // tenta de novo mais tarde
+        const fila = lerFila();
+        const atual = fila.find((f) => f.corpo.id_cliente === item.corpo.id_cliente);
+        if (!atual) continue;
+        if (r.erro) {
+          atual.erro = r.erro;
+          gravarFila(fila);
+          alertar("garcom");
+        } else {
+          gravarFila(fila.filter((f) => f !== atual));
+          aviso(`📡 Pedido guardado (${item.onde}) enviado: nº ${r.pedido.codigo}`, "ok");
+          monitor.forcar();
+        }
+      }
+    } finally {
+      enviandoFila = false;
+    }
+  }
+
+  function renderFila() {
+    const fila = lerFila();
+    const caixa = $("fila-contingencia");
+    caixa.hidden = !fila.length;
+    if (!fila.length) { caixa.replaceChildren(); return; }
+    const esperando = fila.filter((f) => !f.erro).length;
+    caixa.replaceChildren(
+      el("div", { class: "titulo-fila" }, esperando
+        ? `📡 ${esperando} pedido${esperando > 1 ? "s" : ""} guardado${esperando > 1 ? "s" : ""} no celular — vai${esperando > 1 ? "o" : ""} sozinho${esperando > 1 ? "s" : ""} quando o Wi-Fi voltar`
+        : "⚠️ Pedido guardado que o sistema recusou"),
+      ...fila.map((f) => el("div", { class: "pedido-fila" + (f.erro ? " com-erro" : "") },
+        el("div", {}, el("strong", {}, f.onde), " · " + moeda(f.total),
+          el("small", {}, f.itens.join(", ") + " · feito às " + new Date(f.feito).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })),
+          f.erro ? el("small", { class: "erro-fila" }, "Não foi lançado: " + f.erro) : null),
+        f.erro ? el("button", { onclick: () => {
+          const fila2 = lerFila();
+          const x = fila2.find((y) => y.corpo.id_cliente === f.corpo.id_cliente);
+          if (x) { x.erro = ""; gravarFila(fila2); enviarFila(); }
+        } }, "Tentar de novo") : null,
+        el("button", { class: "discreto", onclick: () => {
+          if (!confirm("Descartar este pedido guardado? Ele NÃO vai para o sistema.")) return;
+          gravarFila(lerFila().filter((y) => y.corpo.id_cliente !== f.corpo.id_cliente));
+        } }, "Descartar"))));
+  }
+
+  window.addEventListener("online", () => enviarFila());
+  setInterval(enviarFila, 5000);
+
+  // Última situação recebida do sistema: se o app abrir sem Wi-Fi, o garçom
+  // ainda vê mesas e cardápio para anotar o pedido.
+  const CHAVE_ESTADO = "garcom-ultimo-estado";
+  function guardarEstado(dados) {
+    try {
+      localStorage.setItem(CHAVE_ESTADO, JSON.stringify({ ...dados, chamados_garcom: [] }));
+    } catch (e) { /* sem armazenamento */ }
+  }
 
   // --- Entregar e mesas ------------------------------------------------------
 
@@ -276,8 +399,12 @@
 
   // --- Atualização -----------------------------------------------------------
 
-  function aplicar(dados) {
+  function aplicar(dados, doCelular) {
     estado = dados;
+    if (!doCelular) {
+      guardarEstado(dados);
+      enviarFila();  // conexão de volta: manda o que ficou guardado
+    }
     const assinatura = JSON.stringify(dados.produtos);
     if (assinatura !== assinaturaProdutos) {
       produtos = dados.produtos;
@@ -312,6 +439,17 @@
     document.querySelector(".topo nav").prepend(el("a", { href: "#", onclick: (e) => { e.preventDefault(); app.configuracoes(); } }, "⚙️ App"));
   }
 
-  const monitor = C.acompanhar("/api/estado", aplicar, 2000);
+  renderFila();
+  // Mostra já o que o celular guardou (cardápio e mesas) enquanto o sistema não responde.
+  try {
+    const guardado = JSON.parse(localStorage.getItem(CHAVE_ESTADO) || "null");
+    if (guardado && guardado.produtos) {
+      aplicar(guardado, true);
+      chamadosVistos = null;  // não alerta pelo que já era velho
+      entregasVistas = null;
+    }
+  } catch (e) { /* sem estado guardado */ }
+
+  const monitor = C.acompanhar("/api/estado", (dados) => aplicar(dados), 2000);
   setInterval(() => monitor.forcar(), 30000);
 })();

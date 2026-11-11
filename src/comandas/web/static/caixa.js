@@ -198,7 +198,7 @@
         cliente: $("cliente").value, mesa: $("mesa").value, observacao: $("obs").value,
         comanda_id: $("comanda").value || null,
       });
-      aviso("Pedido nº " + r.pedido.codigo + (r.pedido.setores.length ? " enviado para: " + r.pedido.setores.join(" e ") : " registrado (sem preparo, já está pronto)"), "ok");
+      aviso("Pedido nº " + r.pedido.codigo + (r.pedido.setores.length ? " enviado para: " + r.pedido.setores.map((s) => (estado.ambientes || {})[s] || s).join(" e ") : " registrado (sem preparo, já está pronto)"), "ok");
       limparCarrinho();
       monitor.forcar();
       if (receberDepois) dialogoPagamento([r.pedido], r.pedido.comanda_numero ? "Comanda " + r.pedido.comanda_numero : "Pedido nº " + r.pedido.codigo);

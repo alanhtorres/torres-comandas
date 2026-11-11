@@ -74,9 +74,8 @@
           <div><label>&nbsp;</label><label class="inline"><input id="produto-ativo" type="checkbox" checked> Disponível para venda</label></div>
           <div class="largo"><label for="produto-destino">Vai para</label>
             <select id="produto-destino">
-              <option value="cozinha">Cozinha (precisa de preparo — tela e/ou impressora da cozinha)</option>
-              <option value="bar">Bar (bebidas, drinks — tela e/ou impressora do bar)</option>
-              <option value="nenhum">Nenhuma (já pronto — bebida em lata, chips, sobremesa embalada)</option>
+              {% for amb in ambientes %}<option value="{{ amb.chave }}">{{ amb.icone }} {{ amb.nome }}</option>
+              {% endfor %}<option value="nenhum">Nenhum lugar (já pronto — bebida em lata, chips, sobremesa embalada)</option>
             </select>
             <p class="dica">"Nenhuma": o item aparece só no caixa e no garçom. Para mudar a categoria inteira de uma vez, use a escolha
               na linha da categoria, na lista abaixo.</p></div>
@@ -253,6 +252,14 @@
           <h2>Estabelecimento</h2>
           <label for="cfg-nome_loja">Nome (aparece nas telas e nos cupons)</label>
           <input id="cfg-nome_loja" name="nome_loja" maxlength="60">
+          <label>Logo (aparece junto do nome: nas abas do programa, no login, no painel da TV, no cardápio do QR code e nos QR codes impressos)</label>
+          <div class="linha-logo">
+            <div class="previa-logo" id="previa-logo">{% if logo_url %}<img src="{{ logo_url }}" alt="Logo">{% else %}<span>Sem logo</span>{% endif %}</div>
+            <input type="file" id="arquivo-logo" accept="image/png,image/jpeg,image/webp" hidden>
+            <button type="button" id="enviar-logo">📤 Enviar logo</button>
+            <button type="button" id="remover-logo" class="discreto"{% if not logo_url %} hidden{% endif %}>Remover</button>
+          </div>
+          <p class="dica">PNG com fundo transparente fica melhor. Imagem quadrada ou deitada, de preferência.</p>
           <label for="cfg-tema_padrao">Cores das telas da equipe (caixa, cozinha, garçom, comandas, administração)</label>
           <select id="cfg-tema_padrao" name="tema_padrao">
             <option value="escuro">Modo escuro</option>
@@ -310,22 +317,26 @@
           </div>
         {% endmacro %}
         <div class="cartao" id="cartao-saida">
-          <h2>🍳 Cozinha e bar: como saem os pedidos</h2>
+          <h2>🍳 Ambientes: como saem os pedidos</h2>
           <p class="dica">Para cada lugar de preparo, escolha se os pedidos aparecem numa <strong>tela</strong> (TV ou monitor ligado
-            a um computador com o Torres Comandas), saem na <strong>impressora</strong>, ou os dois. Qual produto vai para a
-            cozinha ou para o bar: escolha em <a href="#produtos">Cardápio</a>, na linha de cada categoria.</p>
+            a um computador com o Torres Comandas), saem na <strong>impressora</strong>, ou os dois. Qual produto vai para cada
+            ambiente: escolha em <a href="#produtos">Cardápio</a>, na linha de cada categoria.</p>
 
-          <h3>👨‍🍳 Cozinha</h3>
-          <label class="inline"><input type="checkbox" name="tela_cozinha" data-setor-tela="cozinha"> <span>Mostrar os pedidos numa
-            tela da cozinha (a cozinha marca "pronto" e o caixa vê quando terminou)</span></label>
-          {{ bloco_impressora("cozinha", "Imprimir os pedidos na impressora da cozinha", "192.168.0.50") }}
-          <p class="dica aviso-setor" data-aviso-setor="cozinha" hidden>⚠️ Sem tela e sem impressora: a cozinha não fica sabendo dos pedidos.</p>
-
-          <h3>🍹 Bar / bebidas</h3>
-          <label class="inline"><input type="checkbox" name="tela_bar" data-setor-tela="bar"> <span>Mostrar os pedidos numa
-            tela do bar (o bar marca "pronto"; com cozinha e bar, o pedido fica pronto quando os dois terminarem)</span></label>
-          {{ bloco_impressora("bar", "Imprimir os pedidos na impressora do bar", "192.168.0.52") }}
-          <p class="dica aviso-setor" data-aviso-setor="bar" hidden>⚠️ Sem tela e sem impressora: o bar não fica sabendo dos pedidos.</p>
+          {% for amb in ambientes %}
+          {% set de = {'cozinha': 'da cozinha', 'bar': 'do bar'}.get(amb.chave, 'de ' ~ amb.nome) %}
+          <div class="ambiente" data-ambiente="{{ amb.chave }}">
+            <h3><span>{{ amb.icone }} {{ amb.nome }}</span>
+              {% if not amb.fixo %}<span class="acoes-ambiente">
+                <button type="button" class="discreto" data-renomear-ambiente="{{ amb.chave }}" data-nome="{{ amb.nome }}" data-icone="{{ amb.icone }}">✏️ Renomear</button>
+                <button type="button" class="discreto" data-excluir-ambiente="{{ amb.chave }}" data-nome="{{ amb.nome }}">🗑️ Excluir</button>
+              </span>{% endif %}</h3>
+            <label class="inline"><input type="checkbox" name="tela_{{ amb.chave }}" data-setor-tela="{{ amb.chave }}"> <span>Mostrar os pedidos
+              numa tela {{ de }} (marca "pronto"; pedido que vai para mais de um lugar só fica pronto quando todos terminarem)</span></label>
+            {{ bloco_impressora(amb.chave, "Imprimir os pedidos na impressora " ~ de, "192.168.0.50") }}
+            <p class="dica aviso-setor" data-aviso-setor="{{ amb.chave }}" hidden>⚠️ Sem tela e sem impressora: ninguém {{ de }} fica sabendo dos pedidos.</p>
+          </div>
+          {% endfor %}
+          <button type="button" id="novo-ambiente" class="novo-ambiente">➕ Novo ambiente (outra tela ou impressora: pizzaria, confeitaria, chapa...)</button>
 
           <p class="dica" style="margin-top: 14px">Onde fica cada tela: no computador da cozinha (ou do bar), abra o Torres Comandas,
             clique em <strong>🖥️ Esta máquina</strong> e escolha a tela que ele abre ao ligar, em tela cheia. Use um usuário só de
@@ -372,6 +383,7 @@
   </main>
 
   <script src="{{ url_for('static', filename='comum.js') }}"></script>
+  <script id="dados-ambientes" type="application/json">{{ ambientes | tojson }}</script>
   <script src="{{ url_for('static', filename='admin.js') }}"></script>
 </body>
 </html>

@@ -15,10 +15,11 @@
     <h1>🛎️ Garçom</h1>
     <span class="espaco"></span>
     <span class="usuario-chip">👤 <strong>{{ usuario.nome }}</strong></span>
-    <nav><a href="/">Início</a><a href="/sair">Sair</a></nav>
+    <nav>{% if not no_app %}<a href="/">Início</a>{% endif %}<a href="/sair">Sair</a></nav>
   </header>
 
   <div id="alertas"></div>
+  <div id="fila-contingencia" hidden></div>
 
   <main>
     <section id="aba-novo" class="aba-garcom">

@@ -157,6 +157,26 @@ assert pagina.js("typeof window.TorresApp === 'object'"), "ponte com o app não 
 assert pagina.js("[...document.querySelectorAll('.topo nav a')].some(a => a.textContent.includes('App'))"), "sem o botão ⚙️ App"
 foto("2-garcom")
 
+passo("App só com a tela do garçom (sem Início, abas e painel)")
+links = pagina.js("[...document.querySelectorAll('.topo nav a')].map(a => a.textContent.trim())")
+assert not any("Início" in l for l in links), f"o app ainda mostra o Início: {links}"
+for caminho in ("/", "/area?tela=painel", "/painel", "/caixa"):
+    pagina.js(f"location.href = {json.dumps(caminho)}; true")
+    time.sleep(2)
+    esperar(f"voltou para o garçom ao abrir {caminho}",
+            lambda: pagina.js("location.pathname") == "/garcom" and pagina.js("!!document.querySelector('#mesas button')"), 20)
+
+passo("A página não fica por baixo das barras do Android")
+adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
+xml = adb("shell", "cat", "/sdcard/ui.xml")
+caixa_web = re.search(r'class="android.webkit.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+tela = re.search(r'Physical size: (\d+)x(\d+)', adb("shell", "wm", "size"))
+assert caixa_web and tela, "não achei o WebView na tela"
+topo, base, altura = int(caixa_web.group(2)), int(caixa_web.group(4)), int(tela.group(2))
+print(f"WebView de y={topo} a y={base} (tela {altura})")
+assert topo > 0, "a página começa por baixo da barra de status"
+assert base < altura, "a página termina por baixo dos botões do Android"
+
 passo("Pedido em anotação sobrevive a recarregar a página")
 pagina.js("[...document.querySelectorAll('#mesas button')].find(b => b.textContent === '5').click();"
           "document.querySelector('#produtos .qtd button.mais').click(); true")
@@ -230,6 +250,45 @@ adb("shell", "am", "start", "-n", f"{PACOTE}/.MainActivity")
 time.sleep(3)
 assert pagina.js("window.__marcador") == "sem-recarregar", "a página recarregou ao reabrir o app"
 assert pagina.js("location.pathname") == "/garcom"
+
+passo("Contingência: sem Wi-Fi o pedido fica guardado e vai sozinho quando a rede volta")
+def pedidos_mesa_5():
+    return len([p for p in admin.json("GET", "/api/estado")["pedidos"] if p["mesa"] == "5"])
+
+
+antes = pedidos_mesa_5()
+time.sleep(3)  # a cópia da tela já foi guardada ao abrir a página
+adb("shell", "cmd", "connectivity", "airplane-mode", "enable")
+try:
+    esperar("celular sem conexão com o sistema",
+            lambda: pagina.js("fetch('/api/identificar', {cache: 'no-store'}).then(() => false, () => true)"), 30)
+    pagina.js("[...document.querySelectorAll('#mesas button')].find(b => b.textContent === '5').click();"
+              "document.querySelector('#produtos .qtd button.mais').click();"
+              "document.getElementById('barra-pedido').click(); true")
+    time.sleep(1)
+    pagina.js("document.querySelector('dialog form button[type=submit]').click(); true")
+    esperar("pedido guardado no celular", lambda: pagina.js(
+        "JSON.parse(localStorage.getItem('garcom-fila') || '[]').length === 1"
+        " && !document.getElementById('fila-contingencia').hidden"), 30)
+    foto("7a-pedido-guardado")
+    assert pedidos_mesa_5() == antes, "o pedido chegou ao sistema sem rede?"
+
+    # O Android fechou a página (ou o garçom recarregou) longe do Wi-Fi: a tela abre pela cópia guardada.
+    pagina.js("location.reload(); true")
+    time.sleep(4)
+    esperar("tela do garçom aberta sem rede (cópia guardada)", lambda: pagina.js(
+        "location.pathname === '/garcom' && !!document.querySelector('#mesas button')"
+        " && !document.getElementById('fila-contingencia').hidden"), 40)
+    foto("7b-sem-rede-recarregado")
+finally:
+    adb("shell", "cmd", "connectivity", "airplane-mode", "disable")
+
+esperar("pedido guardado enviado quando a rede voltou", lambda: pedidos_mesa_5() == antes + 1, 90)
+esperar("fila do celular vazia", lambda: pagina.js("JSON.parse(localStorage.getItem('garcom-fila') || '[]').length === 0"), 30)
+time.sleep(8)
+assert pedidos_mesa_5() == antes + 1, "o pedido guardado foi lançado mais de uma vez"
+foto("7c-enviado")
+
 
 def texto_na_tela(trecho):
     adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")

@@ -56,7 +56,9 @@ class ConectarActivity : Activity() {
             Telas.espacamento(c, it, 24)
         })
 
-        setContentView(ScrollView(c).apply { setBackgroundColor(Telas.FUNDO); addView(coluna) })
+        val rolagem = ScrollView(c).apply { setBackgroundColor(Telas.FUNDO); addView(coluna) }
+        setContentView(rolagem)
+        Telas.respeitarBarras(this, rolagem)
         tratarLink(intent)
     }
 

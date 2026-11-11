@@ -10,10 +10,12 @@ import csv
 import hashlib
 import io
 import json
+import re
 import secrets
 import sqlite3
 import threading
 import time
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,27 +41,13 @@ CONFIG_PADRAO = {
     # Cores das telas da equipe: "escuro" ou "claro". Cada aparelho ainda
     # pode trocar só para ele no botão ☀️/🌙 do topo.
     "tema_padrao": "escuro",
+    # Logo do estabelecimento (arquivo logo.png na pasta de dados). Muda a
+    # cada envio, para as telas buscarem a imagem nova. 0 = sem logo.
+    "logo_versao": 0,
     # Cada impressora é "rede" (IP e porta) ou "usb" (instalada no Windows
-    # deste PC, escolhida pelo nome).
-    "impressora_cozinha_ativa": False,
-    "impressora_cozinha_tipo": "rede",
-    "impressora_cozinha_host": "",
-    "impressora_cozinha_porta": 9100,
-    "impressora_cozinha_usb": "",
-    # Tela da cozinha: os produtos com destino "cozinha" esperam a cozinha
-    # marcar "pronto". Desligada, a cozinha só imprime (o pedido já nasce
-    # pronto e o caixa chama no painel).
-    "tela_cozinha": True,
-    # Tela do bar (como a da cozinha): os produtos com destino "bar" esperam
-    # o bar marcar "pronto". Desligada, o bar só imprime e esses itens não
-    # seguram o pedido.
-    "tela_bar": False,
-    # Impressora do bar: os produtos com destino "bar" (bebidas, drinks...).
-    "impressora_bar_ativa": False,
-    "impressora_bar_tipo": "rede",
-    "impressora_bar_host": "",
-    "impressora_bar_porta": 9100,
-    "impressora_bar_usb": "",
+    # deste PC, escolhida pelo nome). As dos ambientes de preparo (cozinha,
+    # bar e os que o administrador criar) ficam na tabela "ambientes" e
+    # aparecem aqui como tela_<ambiente> e impressora_<ambiente>_* (ver config()).
     # Impressora do caixa: conferência de conta e fechamento de caixa.
     "impressora_caixa_ativa": False,
     "impressora_caixa_tipo": "rede",
@@ -91,7 +79,7 @@ CONFIG_PRIVADA = {"secret_key", "versao_permissoes", "id_instalacao"}
 PERMISSOES = {
     "pedidos": "Caixa: lançar e acompanhar pedidos, chamar no painel, atender garçom",
     "garcom": "Página do garçom: pedidos na mesa pelo celular/tablet e alertas do QR code",
-    "cozinha": "Telas de preparo: cozinha e bar (iniciar preparo / pronto)",
+    "cozinha": "Telas de preparo: cozinha, bar e outros ambientes (iniciar preparo / pronto)",
     "receber": "Receber pagamentos",
     "caixa": "Abrir e fechar o caixa, sangria e suprimento",
     "cancelar": "Cancelar pedidos (com motivo)",
@@ -306,6 +294,24 @@ CREATE TABLE IF NOT EXISTS mensagens_enviadas (
     enviado_em REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mensagens_campanha ON mensagens_enviadas(campanha, cliente_id);
+CREATE TABLE IF NOT EXISTS ambientes (
+    chave TEXT PRIMARY KEY,
+    nome TEXT NOT NULL,
+    icone TEXT NOT NULL DEFAULT '',
+    tela INTEGER NOT NULL DEFAULT 0,
+    impressora_ativa INTEGER NOT NULL DEFAULT 0,
+    impressora_tipo TEXT NOT NULL DEFAULT 'rede',
+    impressora_host TEXT NOT NULL DEFAULT '',
+    impressora_porta INTEGER NOT NULL DEFAULT 9100,
+    impressora_usb TEXT NOT NULL DEFAULT '',
+    ordem INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS pedido_preparo (
+    pedido_id INTEGER NOT NULL REFERENCES pedidos(id),
+    setor TEXT NOT NULL,
+    status TEXT NOT NULL,
+    PRIMARY KEY (pedido_id, setor)
+);
 CREATE TABLE IF NOT EXISTS midias (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     arquivo TEXT NOT NULL,
@@ -342,6 +348,9 @@ COLUNAS_NOVAS = {
         # Preparo em cada tela (cozinha e bar): "" = não passa por ela.
         "status_cozinha": "TEXT NOT NULL DEFAULT ''",
         "status_bar": "TEXT NOT NULL DEFAULT ''",
+        # Código gerado pelo celular do garçom: o mesmo pedido reenviado (feito
+        # sem Wi-Fi, ou resposta perdida no caminho) não é lançado duas vezes.
+        "id_cliente": "TEXT NOT NULL DEFAULT ''",
     },
 }
 
@@ -350,20 +359,38 @@ class ErroNegocio(Exception):
     """Erro de regra de negócio, com mensagem pronta pra mostrar ao usuário."""
 
 
-# Onde cada produto sai: na cozinha (tela e impressora da cozinha), no bar
-# (impressora do bar) ou em nenhum lugar (já pronto: sai direto do caixa).
-DESTINOS = {"cozinha": "Cozinha", "bar": "Bar", "nenhum": "Não imprime (já pronto)"}
-# Setores que podem ter tela de preparo (cada um com o seu "pronto").
-SETORES_TELA = ("cozinha", "bar")
+# Ambientes de preparo: cozinha e bar já vêm prontos (não podem ser
+# excluídos); o administrador cria outros (pizzaria, confeitaria...). Cada um
+# pode ter tela (marca "pronto") e/ou impressora. Um produto vai para um
+# ambiente ou para "nenhum" (já pronto: sai direto do caixa).
+# (chave, nome, ícone, tela ligada, ordem)
+AMBIENTES_FIXOS = (("cozinha", "Cozinha", "👨‍🍳", True, 0), ("bar", "Bar", "🍹", False, 1))
+CAMPOS_AMBIENTE = {
+    # chave na config -> (coluna, padrão)
+    "tela_{}": ("tela", False),
+    "impressora_{}_ativa": ("impressora_ativa", False),
+    "impressora_{}_tipo": ("impressora_tipo", "rede"),
+    "impressora_{}_host": ("impressora_host", ""),
+    "impressora_{}_porta": ("impressora_porta", 9100),
+    "impressora_{}_usb": ("impressora_usb", ""),
+}
+# Chaves que um ambiente novo não pode usar (são abas/telas do programa).
+CHAVES_RESERVADAS = {"caixa", "comandas", "garcom", "painel", "admin", "nenhum", "area", "preparo", "cozinha", "bar"}
 
 
 def setor_do_item(item: dict) -> str:
-    """Destino de um produto ou item de pedido. Os gravados antes do bar
+    """Ambiente de um produto ou item de pedido. Os gravados antes do bar
     existir não têm destino e seguem o "vai para a cozinha"."""
     destino = item.get("destino") or item.get("setor")
-    if destino in DESTINOS:
+    if destino:
         return destino
     return "cozinha" if item.get("vai_cozinha", True) else "nenhum"
+
+
+def chave_de_nome(nome: str) -> str:
+    """"Pizzaria 2" -> "pizzaria2" (só letras e números, sem acento)."""
+    sem_acento = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]", "", sem_acento.lower())[:20] or "ambiente"
 
 
 def _centavos(valor, nome: str, permitir_zero: bool = True) -> int:
@@ -496,6 +523,8 @@ class Banco:
                         self.conn.execute(
                             "UPDATE pedidos SET status_cozinha = status WHERE status IN ('novo', 'preparando') "
                             "AND EXISTS (SELECT 1 FROM pedido_itens i WHERE i.pedido_id = pedidos.id AND i.vai_cozinha = 1)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_id_cliente ON pedidos(id_cliente)")
+        self._migrar_ambientes()
         linha = self.conn.execute("SELECT valor FROM config WHERE chave = 'versao_permissoes'").fetchone()
         versao = json.loads(linha["valor"]) if linha else 1
         for alvo, novas in sorted(PERMISSOES_NOVAS.items()):
@@ -510,6 +539,30 @@ class Banco:
         self.conn.execute(
             "INSERT INTO config (chave, valor) VALUES ('versao_permissoes', ?) "
             "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor", (json.dumps(versao),))
+
+    def _migrar_ambientes(self) -> None:
+        """Cozinha e bar viram ambientes (com as configurações de tela e
+        impressora de antes), e o preparo de cada pedido passa para a tabela
+        pedido_preparo (antes: colunas status_cozinha/status_bar)."""
+        antigos = {l["chave"]: json.loads(l["valor"]) for l in self.conn.execute("SELECT chave, valor FROM config")}
+        for chave, nome, icone, tela, ordem in AMBIENTES_FIXOS:
+            if self.conn.execute("SELECT 1 FROM ambientes WHERE chave = ?", (chave,)).fetchone():
+                continue
+            valores = {"chave": chave, "nome": nome, "icone": icone, "ordem": ordem}
+            for modelo, (coluna, padrao) in CAMPOS_AMBIENTE.items():
+                padrao = tela if coluna == "tela" else padrao
+                valor = antigos.get(modelo.format(chave), padrao)
+                valores[coluna] = int(valor) if isinstance(padrao, (bool, int)) else str(valor)
+            self.conn.execute(
+                "INSERT INTO ambientes (chave, nome, icone, tela, impressora_ativa, impressora_tipo, impressora_host, "
+                "impressora_porta, impressora_usb, ordem) VALUES (:chave, :nome, :icone, :tela, :impressora_ativa, "
+                ":impressora_tipo, :impressora_host, :impressora_porta, :impressora_usb, :ordem)", valores)
+        if "migrou_preparo" not in antigos:
+            for setor in ("cozinha", "bar"):
+                self.conn.execute(
+                    f"INSERT OR IGNORE INTO pedido_preparo (pedido_id, setor, status) "
+                    f"SELECT id, '{setor}', status_{setor} FROM pedidos WHERE status_{setor} != ''")
+            self.conn.execute("INSERT INTO config (chave, valor) VALUES ('migrou_preparo', 'true')")
 
     @contextmanager
     def _transacao(self):
@@ -555,7 +608,89 @@ class Banco:
             for linha in self.conn.execute("SELECT chave, valor FROM config"):
                 if linha["chave"] in CONFIG_PADRAO or linha["chave"] in CONFIG_PRIVADA:
                     dados[linha["chave"]] = json.loads(linha["valor"])
+            # Tela e impressora de cada ambiente: tela_cozinha, impressora_bar_host...
+            for amb in self.ambientes():
+                for modelo, (coluna, _) in CAMPOS_AMBIENTE.items():
+                    dados[modelo.format(amb["chave"])] = amb[coluna]
             return dados
+
+    # --- Ambientes de preparo (cozinha, bar e os criados pelo administrador) ---
+
+    def ambientes(self) -> list:
+        with self.lock:
+            lista = []
+            for l in self.conn.execute("SELECT * FROM ambientes ORDER BY ordem, nome COLLATE NOCASE"):
+                a = dict(l)
+                a["tela"] = bool(a["tela"])
+                a["impressora_ativa"] = bool(a["impressora_ativa"])
+                a["fixo"] = a["chave"] in ("cozinha", "bar")
+                lista.append(a)
+            return lista
+
+    def ambiente(self, chave: str) -> Optional[dict]:
+        return next((a for a in self.ambientes() if a["chave"] == chave), None)
+
+    def nome_destino(self, destino: str) -> str:
+        if destino == "nenhum":
+            return "nenhum lugar (já pronto)"
+        amb = self.ambiente(destino)
+        return amb["nome"] if amb else destino
+
+    def criar_ambiente(self, nome: str, icone: str = "", por: Optional[dict] = None) -> dict:
+        nome = _texto(nome, 30)
+        if not nome:
+            raise ErroNegocio("Informe o nome do ambiente (ex.: Pizzaria, Confeitaria).")
+        existentes = self.ambientes()
+        if any(a["nome"].lower() == nome.lower() for a in existentes):
+            raise ErroNegocio("Já existe um ambiente com esse nome.")
+        base = chave_de_nome(nome)
+        chave, n = base, 2
+        usadas = {a["chave"] for a in existentes} | CHAVES_RESERVADAS
+        while chave in usadas:
+            chave, n = f"{base[:18]}{n}", n + 1
+        with self._transacao():
+            self.conn.execute(
+                "INSERT INTO ambientes (chave, nome, icone, tela, ordem) VALUES (?, ?, ?, 1, ?)",
+                (chave, nome, _texto(icone, 8) or "🍽️", max([a["ordem"] for a in existentes] + [0]) + 1))
+            self._registrar(por, "Criou ambiente", f"{nome} (tela ligada, sem impressora)")
+        return self.ambiente(chave)
+
+    def atualizar_ambiente(self, chave: str, nome: str, icone: str = "", por: Optional[dict] = None) -> dict:
+        atual = self.ambiente(chave)
+        if not atual:
+            raise ErroNegocio("Ambiente não encontrado.")
+        nome = _texto(nome, 30)
+        if not nome:
+            raise ErroNegocio("Informe o nome do ambiente.")
+        if any(a["nome"].lower() == nome.lower() and a["chave"] != chave for a in self.ambientes()):
+            raise ErroNegocio("Já existe um ambiente com esse nome.")
+        with self._transacao():
+            self.conn.execute("UPDATE ambientes SET nome = ?, icone = ? WHERE chave = ?",
+                              (nome, _texto(icone, 8) or atual["icone"], chave))
+            if nome != atual["nome"]:
+                self._registrar(por, "Renomeou ambiente", f"{atual['nome']} → {nome}")
+        return self.ambiente(chave)
+
+    def excluir_ambiente(self, chave: str, por: Optional[dict] = None) -> None:
+        atual = self.ambiente(chave)
+        if not atual:
+            raise ErroNegocio("Ambiente não encontrado.")
+        if atual["fixo"]:
+            raise ErroNegocio("Cozinha e bar não podem ser excluídos: desligue a tela e a impressora deles.")
+        with self.lock:
+            produtos = self.conn.execute("SELECT COUNT(*) AS n FROM produtos WHERE destino = ?", (chave,)).fetchone()["n"]
+            na_fila = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM pedido_preparo pp JOIN pedidos p ON p.id = pp.pedido_id "
+                "WHERE pp.setor = ? AND pp.status IN ('novo', 'preparando') AND p.status IN ('novo', 'preparando')",
+                (chave,)).fetchone()["n"]
+        if produtos:
+            raise ErroNegocio(f"{produtos} produto(s) ainda vão para {atual['nome']}. "
+                              "Mude-os para outro ambiente no Cardápio antes de excluir.")
+        if na_fila:
+            raise ErroNegocio(f"{atual['nome']} ainda tem {na_fila} pedido(s) na fila. Termine-os antes de excluir.")
+        with self._transacao():
+            self.conn.execute("DELETE FROM ambientes WHERE chave = ?", (chave,))
+            self._registrar(por, "Excluiu ambiente", atual["nome"])
 
     def config_publica(self) -> dict:
         dados = self.config()
@@ -566,8 +701,30 @@ class Banco:
     def salvar_config(self, valores: dict, por: Optional[dict] = None) -> None:
         atual = self.config()
         mudancas = []
+        campos_ambiente = {}
+        for amb in self.ambientes():
+            for modelo, (coluna, padrao) in CAMPOS_AMBIENTE.items():
+                campos_ambiente[modelo.format(amb["chave"])] = (amb["chave"], coluna, padrao)
         with self._transacao():
             for chave, valor in valores.items():
+                if chave in campos_ambiente:
+                    amb, coluna, padrao = campos_ambiente[chave]
+                    if isinstance(padrao, bool):
+                        valor = bool(valor)
+                    elif isinstance(padrao, int):
+                        try:
+                            valor = int(valor)
+                        except (TypeError, ValueError):
+                            raise ErroNegocio(f"Valor inválido para '{chave}'.")
+                    else:
+                        valor = "" if valor is None else str(valor).strip()
+                    if coluna == "impressora_tipo" and valor not in ("rede", "usb"):
+                        raise ErroNegocio("Tipo de impressora inválido (rede ou USB).")
+                    self.conn.execute(f"UPDATE ambientes SET {coluna} = ? WHERE chave = ?",
+                                      (int(valor) if isinstance(valor, bool) else valor, amb))
+                    if atual.get(chave) != valor:
+                        mudancas.append(f"{chave}: {atual.get(chave)!r} → {valor!r}")
+                    continue
                 if chave not in CONFIG_PADRAO and chave not in CONFIG_PRIVADA:
                     continue
                 padrao = CONFIG_PADRAO.get(chave)
@@ -589,7 +746,7 @@ class Banco:
                     "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
                     (chave, json.dumps(valor)),
                 )
-                if chave not in CONFIG_PRIVADA and atual.get(chave) != valor:
+                if chave not in CONFIG_PRIVADA and chave != "logo_versao" and atual.get(chave) != valor:
                     mudancas.append(f"{chave}: {atual.get(chave)!r} → {valor!r}")
             if mudancas:
                 self._registrar(por, "Alterou configurações", "; ".join(mudancas))
@@ -770,13 +927,16 @@ class Banco:
             linha = self.conn.execute("SELECT * FROM produtos WHERE id = ?", (produto_id,)).fetchone()
             return self._produto_dict(linha) if linha else None
 
-    @staticmethod
-    def _validar_produto(dados: dict) -> dict:
+    def _validar_destino(self, destino: str) -> None:
+        if destino != "nenhum" and not self.ambiente(destino):
+            raise ErroNegocio("Ambiente do produto inválido.")
+
+    def _validar_produto(self, dados: dict) -> dict:
         nome = _texto(dados.get("nome"), 80)
         if not nome:
             raise ErroNegocio("Informe o nome do produto.")
-        if dados.get("destino") and dados["destino"] not in DESTINOS:
-            raise ErroNegocio("Destino do produto inválido.")
+        if dados.get("destino"):
+            self._validar_destino(dados["destino"])
         destino = setor_do_item({"destino": dados.get("destino"), "vai_cozinha": dados.get("vai_cozinha", True)})
         return {
             "nome": nome,
@@ -798,7 +958,7 @@ class Banco:
                 valores,
             )
             self._registrar(por, "Cadastrou produto", f"{valores['nome']} — {moeda(valores['preco_centavos'])}"
-                            + {"cozinha": "", "bar": " (sai no bar)", "nenhum": " (não vai para a cozinha)"}[valores["destino"]])
+                            + ("" if valores["destino"] == "cozinha" else f" (vai para: {self.nome_destino(valores['destino'])})"))
         return self.obter_produto(cur.lastrowid)
 
     def atualizar_produto(self, produto_id: int, dados: dict, por: Optional[dict] = None) -> dict:
@@ -820,7 +980,7 @@ class Banco:
         if bool(valores["ativo"]) != atual["ativo"]:
             mudancas.append("disponível" if valores["ativo"] else "pausado (indisponível)")
         if valores["destino"] != atual["destino"]:
-            mudancas.append(f"sai em: {DESTINOS[atual['destino']]} → {DESTINOS[valores['destino']]}")
+            mudancas.append(f"vai para: {self.nome_destino(atual['destino'])} → {self.nome_destino(valores['destino'])}")
         with self._transacao():
             self.conn.execute(
                 "UPDATE produtos SET nome = :nome, descricao = :descricao, categoria = :categoria, "
@@ -835,12 +995,11 @@ class Banco:
     def definir_destino_categoria(self, categoria: str, destino: str, por: Optional[dict] = None) -> int:
         """Escolhe de uma vez onde saem todos os produtos da categoria
         (ex.: "Bebidas" → bar, "Lanches" → cozinha)."""
-        if destino not in DESTINOS:
-            raise ErroNegocio("Destino inválido.")
+        self._validar_destino(destino)
         with self._transacao():
             cur = self.conn.execute("UPDATE produtos SET destino = ?, vai_cozinha = ? WHERE categoria = ?",
                                     (destino, 1 if destino == "cozinha" else 0, categoria))
-            self._registrar(por, "Alterou categoria", f"{categoria}: todos os produtos saem em {DESTINOS[destino]}")
+            self._registrar(por, "Alterou categoria", f"{categoria}: todos os produtos vão para {self.nome_destino(destino)}")
         return cur.rowcount
 
     def definir_cozinha_categoria(self, categoria: str, vai_cozinha: bool, por: Optional[dict] = None) -> int:
@@ -935,7 +1094,18 @@ class Banco:
 
     def criar_pedido(self, itens: list, origem: str = "caixa", mesa: str = "",
                      cliente: str = "", observacao: str = "", por: Optional[dict] = None,
-                     comanda_id: Optional[int] = None) -> dict:
+                     comanda_id: Optional[int] = None, id_cliente: str = "", feito_em=None) -> dict:
+        """`id_cliente`: código do pedido gerado no celular. Se chegar de novo
+        (reenvio da contingência), devolve o mesmo pedido com "ja_existia"."""
+        id_cliente = _texto(id_cliente, 64)
+        with self.lock:
+            if id_cliente:
+                linha = self.conn.execute("SELECT id FROM pedidos WHERE id_cliente = ?", (id_cliente,)).fetchone()
+                if linha:
+                    return {**self.obter_pedido(linha["id"]), "ja_existia": True}
+            return self._criar_pedido(itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em)
+
+    def _criar_pedido(self, itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em) -> dict:
         if not isinstance(itens, list) or not itens:
             raise ErroNegocio("O pedido está vazio.")
         if origem not in ORIGENS:
@@ -964,10 +1134,9 @@ class Banco:
         # Sem nada para preparar (só bebidas, chips...), o pedido já nasce
         # "pronto": não passa pela cozinha nem pela impressora dela. Cozinha e
         # bar só seguram o pedido quando têm tela (senão eles só imprimem).
-        cfg = self.config()
-        precisa_cozinha = cfg["tela_cozinha"] and any(p["vai_cozinha"] for p, _, _ in linhas_itens)
-        precisa_bar = cfg["tela_bar"] and any(p["destino"] == "bar" for p, _, _ in linhas_itens)
-        aguarda = precisa_cozinha or precisa_bar
+        destinos = {p["destino"] for p, _, _ in linhas_itens}
+        preparo = [a["chave"] for a in self.ambientes() if a["tela"] and a["chave"] in destinos]
+        aguarda = bool(preparo)
         with self._transacao():
             agora = self.agora()
             dia = self._dia()
@@ -975,15 +1144,16 @@ class Banco:
             numero = (linha["n"] or 0) + 1
             cur = self.conn.execute(
                 "INSERT INTO pedidos (tipo, dia, numero, codigo, origem, mesa, cliente, observacao, status, "
-                "total_centavos, criado_em, atualizado_em, pronto_em, usuario_id, usuario_nome, comanda_id, "
-                "status_cozinha, status_bar) "
-                "VALUES ('pedido', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "total_centavos, criado_em, atualizado_em, pronto_em, usuario_id, usuario_nome, comanda_id, id_cliente) "
+                "VALUES ('pedido', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (dia, numero, str(numero), origem, _texto(mesa, 40), _texto(cliente, 60), _texto(observacao, 300),
                  "novo" if aguarda else "pronto", total, agora, agora, None if aguarda else agora,
-                 (por or {}).get("id"), (por or {}).get("nome") or "", comanda["id"] if comanda else None,
-                 "novo" if precisa_cozinha else "", "novo" if precisa_bar else ""),
+                 (por or {}).get("id"), (por or {}).get("nome") or "", comanda["id"] if comanda else None, id_cliente),
             )
             pedido_id = cur.lastrowid
+            for setor in preparo:
+                self.conn.execute("INSERT INTO pedido_preparo (pedido_id, setor, status) VALUES (?, ?, 'novo')",
+                                  (pedido_id, setor))
             for produto, quantidade, obs in linhas_itens:
                 self.conn.execute(
                     "INSERT INTO pedido_itens (pedido_id, produto_id, nome, preco_centavos, quantidade, observacao, "
@@ -994,7 +1164,15 @@ class Banco:
             resumo = ", ".join(f"{q}x {p['nome']}" for p, q, _ in linhas_itens)
             onde = (f" — comanda {comanda['numero']}" if comanda else "") + (f" — mesa {mesa}" if mesa else "")
             sem_cozinha = "" if aguarda else " — sem preparo, já pronto"
-            self._registrar(por, "Lançou pedido", f"Nº {numero}{onde}: {resumo} ({moeda(total)}){sem_cozinha}", pedido_id)
+            contingencia = ""
+            try:
+                feito = float(feito_em) if feito_em else 0
+            except (TypeError, ValueError):
+                feito = 0
+            if 0 < agora - feito <= 86400 and agora - feito > 60:
+                contingencia = f" — feito sem Wi-Fi às {datetime.fromtimestamp(feito):%H:%M} e enviado depois"
+            self._registrar(por, "Lançou pedido", f"Nº {numero}{onde}: {resumo} ({moeda(total)}){sem_cozinha}{contingencia}",
+                            pedido_id)
         return self.obter_pedido(pedido_id)
 
     def obter_pedido(self, pedido_id: int) -> Optional[dict]:
@@ -1016,10 +1194,15 @@ class Banco:
                 item["setor"] = setor_do_item(item)
                 pedido["itens"].append(item)
             pedido["vai_cozinha"] = any(i["vai_cozinha"] for i in pedido["itens"])
-            # Ambientes que recebem este pedido (cada um na sua impressora).
-            pedido["setores"] = [s for s in ("cozinha", "bar") if any(i["setor"] == s for i in pedido["itens"])]
+            # Ambientes que recebem este pedido (cada um na sua tela/impressora).
+            ordem = [a["chave"] for a in self.ambientes()]
+            usados = {i["setor"] for i in pedido["itens"]} - {"nenhum"}
+            pedido["setores"] = sorted(usados, key=lambda s: ordem.index(s) if s in ordem else len(ordem))
             # Situação em cada tela de preparo (só as que o pedido usa).
-            pedido["preparo"] = {s: pedido[f"status_{s}"] for s in SETORES_TELA if pedido[f"status_{s}"]}
+            pedido["preparo"] = {l["setor"]: l["status"] for l in self.conn.execute(
+                "SELECT setor, status FROM pedido_preparo WHERE pedido_id = ?", (pedido_id,))}
+            for chave in ("status_cozinha", "status_bar"):
+                pedido.pop(chave, None)
             return pedido
 
     def _exigir_pedido(self, pedido_id: int) -> dict:
@@ -1041,7 +1224,7 @@ class Banco:
         if pedido["status"] in ("entregue", "cancelado") and status != pedido["status"]:
             raise ErroNegocio("Esse pedido já foi finalizado.")
         if setor:
-            if setor not in SETORES_TELA or status not in ("novo", "preparando", "pronto"):
+            if not self.ambiente(setor) or status not in ("novo", "preparando", "pronto"):
                 raise ErroNegocio("Status inválido.")
             if setor not in pedido["preparo"]:
                 raise ErroNegocio("Esse pedido não tem nada para preparar aqui.")
@@ -1068,7 +1251,8 @@ class Banco:
             agora = self.agora()
             campos = {"status": geral, "atualizado_em": agora}
             for s, v in preparo.items():
-                campos[f"status_{s}"] = v
+                self.conn.execute("UPDATE pedido_preparo SET status = ? WHERE pedido_id = ? AND setor = ?",
+                                  (v, pedido_id, s))
             if geral == "pronto":
                 campos["pronto_em"] = agora
             if geral == "cancelado":
@@ -1076,7 +1260,7 @@ class Banco:
                 campos["motivo_cancelamento"] = motivo
             sets = ", ".join(f"{k} = ?" for k in campos)
             self.conn.execute(f"UPDATE pedidos SET {sets} WHERE id = ?", (*campos.values(), pedido_id))
-            onde = f" ({DESTINOS[setor].lower()})" if setor else ""
+            onde = f" ({self.nome_destino(setor).lower()})" if setor else ""
             if geral == "cancelado":
                 self._registrar(por, "Cancelou pedido", f"Nº {pedido['codigo']} ({moeda(pedido['total_centavos'])}) — motivo: {motivo}", pedido_id)
             else:

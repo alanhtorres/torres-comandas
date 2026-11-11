@@ -76,3 +76,13 @@ textarea { resize: vertical; }
 .passos-conexao li { margin-bottom: 6px; }
 #cartao-saida h3 { margin: 20px 0 6px; font-size: 1.05rem; border-top: 1px solid var(--borda); padding-top: 14px; }
 .aviso-setor { color: var(--amarelo, #f59e0b); }
+#cartao-saida h3 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#cartao-saida .acoes-ambiente { margin-left: auto; display: flex; gap: 6px; }
+#cartao-saida .acoes-ambiente button { font-size: .85rem; padding: 4px 10px; }
+.novo-ambiente { margin-top: 18px; width: 100%; padding: 12px; border: 2px dashed var(--borda); background: transparent;
+  color: var(--destaque); font-weight: 700; border-radius: 10px; cursor: pointer; }
+.novo-ambiente:hover { border-color: var(--destaque); }
+.linha-logo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 6px 0; }
+.previa-logo { width: 120px; height: 72px; border: 1px dashed var(--borda); border-radius: 10px; display: grid; place-items: center;
+  background: repeating-conic-gradient(rgba(127,127,127,.12) 0 25%, transparent 0 50%) 0 0 / 16px 16px; color: var(--texto-2); font-size: .85rem; }
+.previa-logo img { max-width: 112px; max-height: 64px; object-fit: contain; }
