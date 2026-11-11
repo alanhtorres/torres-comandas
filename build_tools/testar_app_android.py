@@ -55,6 +55,19 @@ def passo(texto):
     print(f"\n==> {texto}", flush=True)
 
 
+def tela_xml():
+    """Lê os elementos da tela. O uiautomator às vezes falha quando a tela está
+    mudando (\"could not get idle state\"): tenta de novo algumas vezes."""
+    for tentativa in range(6):
+        adb("shell", "rm", "-f", "/sdcard/ui.xml", check=False)
+        adb("shell", "uiautomator", "dump", "/sdcard/ui.xml", check=False)
+        xml = adb("shell", "cat", "/sdcard/ui.xml", check=False)
+        if "<hierarchy" in xml and "</hierarchy>" in xml:
+            return xml
+        time.sleep(2)
+    raise AssertionError("o uiautomator não conseguiu ler a tela")
+
+
 # --- Sistema: administrador, produto, mesa e garçom --------------------------
 
 class Api:
@@ -137,8 +150,20 @@ pagina = Pagina()
 def login_na_frente():
     # Logo depois de ligar, o emulador às vezes põe a tela inicial do Android
     # por cima do app: traz o app de volta para a frente e tenta de novo.
-    if f"{PACOTE}/" not in adb("shell", "dumpsys", "activity", "activities").split("ResumedActivity")[1][:300]:
+    na_frente = adb("shell", "dumpsys", "activity", "activities").split("ResumedActivity")[1][:300]
+    if f"{PACOTE}/" not in na_frente:
         adb("shell", "am", "start", "-n", f"{PACOTE}/.MainActivity", check=False)
+    elif "ConectarActivity" in na_frente:
+        # A rede do emulador às vezes demora a subir logo depois de ligar e o
+        # app mostra "não respondeu": faz como a pessoa faria, toca em Conectar.
+        xml = tela_xml()
+        if "não respondeu" in xml:
+            botao = re.search(r'<node [^>]*?text="Conectar"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+            if botao:
+                x1, y1, x2, y2 = map(int, botao.groups())
+                adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+                time.sleep(3)
+        return False
     return (pagina.js("location.pathname") or "") == "/login"
 
 
@@ -167,8 +192,7 @@ for caminho in ("/", "/area?tela=painel", "/painel", "/caixa"):
             lambda: pagina.js("location.pathname") == "/garcom" and pagina.js("!!document.querySelector('#mesas button')"), 20)
 
 passo("A página não fica por baixo das barras do Android")
-adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
-xml = adb("shell", "cat", "/sdcard/ui.xml")
+xml = tela_xml()
 caixa_web = re.search(r'class="android.webkit.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
 tela = re.search(r'Physical size: (\d+)x(\d+)', adb("shell", "wm", "size"))
 assert caixa_web and tela, "não achei o WebView na tela"
@@ -201,8 +225,7 @@ foto("4-notificacao")
 
 def tocar_texto(trecho):
     """Toca no elemento da tela (fora do WebView) que contém o texto."""
-    adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
-    xml = adb("shell", "cat", "/sdcard/ui.xml")
+    xml = tela_xml()
     for no in re.finditer(r'<node [^>]*?text="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml):
         if trecho.lower() in no.group(1).lower():
             x1, y1, x2, y2 = map(int, no.group(2, 3, 4, 5))
@@ -291,8 +314,7 @@ foto("7c-enviado")
 
 
 def texto_na_tela(trecho):
-    adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
-    return trecho.lower() in adb("shell", "cat", "/sdcard/ui.xml").lower()
+    return trecho.lower() in tela_xml().lower()
 
 
 def digitar_ip(ip):
