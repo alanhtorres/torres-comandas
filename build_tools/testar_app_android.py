@@ -194,14 +194,31 @@ for caminho in ("/", "/area?tela=painel", "/painel", "/caixa"):
 passo("A página não fica por baixo das barras do Android")
 # A leitura da tela às vezes pega um instante em que o WebView ainda não
 # aparece (página recarregando): lê de novo algumas vezes antes de desistir.
+# Se o emulador cobriu o app (aviso "não está respondendo" do Android,
+# tela inicial...), toca em "Aguardar", fecha os avisos e traz o app de volta.
 caixa_web = tela = None
+xml = ""
 for tentativa in range(8):
+    if tentativa:
+        espera = re.search(r'<node [^>]*?text="(?:Wait|Aguardar)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+        if espera:
+            x1, y1, x2, y2 = map(int, espera.groups())
+            adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2), check=False)
+        adb("shell", "am", "broadcast", "-a", "android.intent.action.CLOSE_SYSTEM_DIALOGS", check=False)
+        if f"{PACOTE}/" not in adb("shell", "dumpsys", "activity", "activities").split("ResumedActivity")[1][:300]:
+            adb("shell", "am", "start", "-n", f"{PACOTE}/.MainActivity", check=False)
+        time.sleep(3)
     xml = tela_xml()
     caixa_web = re.search(r'class="android.webkit.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
     tela = re.search(r'Physical size: (\d+)x(\d+)', adb("shell", "wm", "size", check=False))
     if caixa_web and tela:
         break
     time.sleep(3)
+if not (caixa_web and tela):
+    foto("erro-webview")
+    (FOTOS / "tela-erro-webview.xml").write_text(xml, encoding="utf-8")
+    print("na frente:", adb("shell", "dumpsys", "activity", "activities").split("ResumedActivity")[1][:300])
+    print("classes na tela:", sorted(set(re.findall(r'class="([^"]+)"', xml))))
 assert caixa_web and tela, "não achei o WebView na tela"
 topo, base, altura = int(caixa_web.group(2)), int(caixa_web.group(4)), int(tela.group(2))
 print(f"WebView de y={topo} a y={base} (tela {altura})")
