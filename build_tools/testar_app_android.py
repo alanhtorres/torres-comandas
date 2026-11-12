@@ -192,9 +192,16 @@ for caminho in ("/", "/area?tela=painel", "/painel", "/caixa"):
             lambda: pagina.js("location.pathname") == "/garcom" and pagina.js("!!document.querySelector('#mesas button')"), 20)
 
 passo("A página não fica por baixo das barras do Android")
-xml = tela_xml()
-caixa_web = re.search(r'class="android.webkit.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
-tela = re.search(r'Physical size: (\d+)x(\d+)', adb("shell", "wm", "size"))
+# A leitura da tela às vezes pega um instante em que o WebView ainda não
+# aparece (página recarregando): lê de novo algumas vezes antes de desistir.
+caixa_web = tela = None
+for tentativa in range(8):
+    xml = tela_xml()
+    caixa_web = re.search(r'class="android.webkit.WebView"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+    tela = re.search(r'Physical size: (\d+)x(\d+)', adb("shell", "wm", "size", check=False))
+    if caixa_web and tela:
+        break
+    time.sleep(3)
 assert caixa_web and tela, "não achei o WebView na tela"
 topo, base, altura = int(caixa_web.group(2)), int(caixa_web.group(4)), int(tela.group(2))
 print(f"WebView de y={topo} a y={base} (tela {altura})")
