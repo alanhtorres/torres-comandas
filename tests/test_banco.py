@@ -817,3 +817,62 @@ def test_atualizacao_leva_cozinha_e_bar_antigos_para_os_ambientes(tmp_path):
     # abrir de novo não repete a migração
     Banco(caminho)
     assert banco.obter_pedido(pedido["id"])["preparo"] == {"cozinha": "preparando", "bar": "novo"}
+
+
+# --- Delivery -----------------------------------------------------------------
+
+ENTREGA = {"telefone": "(11) 98765-4321", "endereco": "Rua das Flores, 123", "bairro": "Centro",
+           "referencia": "apto 12", "taxa": 700, "pagamento": "dinheiro", "troco": 10000}
+
+
+def test_delivery_soma_taxa_guarda_endereco_e_nao_vai_ao_painel(banco):
+    banco.salvar_config({"chamar_ao_ficar_pronto": True})
+    p = _produto(banco, preco=3000)
+    pedido = _pedido(banco, p, 2, cliente="Maria", entrega=ENTREGA)
+    assert pedido["entrega"] is True and pedido["total_centavos"] == 6700
+    assert pedido["entrega_telefone"] == "11987654321" and pedido["entrega_telefone_formatado"] == "(11) 98765-4321"
+    assert (pedido["entrega_endereco"], pedido["entrega_bairro"], pedido["entrega_troco"]) == ("Rua das Flores, 123", "Centro", 10000)
+    # ficou pronto: não é chamado no painel (nem automático, nem pelo botão)
+    assert banco.mudar_status(pedido["id"], "pronto")["status"] == "pronto"
+    with pytest.raises(ErroNegocio, match="não é chamado no painel"):
+        banco.chamar(pedido["id"])
+    assert banco.chamadas_recentes() == []
+    conta = banco.contas_abertas()[0]
+    assert conta["titulo"] == "🛵 Delivery nº 1 · Maria" and conta["total"] == 6700
+    assert banco.mudar_status(pedido["id"], "entregue")["status"] == "entregue"
+    assert "Saiu para entrega" in _acoes(banco)
+    # pedido normal continua igual
+    assert _pedido(banco, p)["entrega"] is False
+
+
+def test_delivery_valida_dados_e_lembra_o_ultimo_endereco(banco):
+    p = _produto(banco)
+    with pytest.raises(ErroNegocio, match="nome do cliente"):
+        _pedido(banco, p, entrega=ENTREGA)
+    with pytest.raises(ErroNegocio, match="endereço"):
+        _pedido(banco, p, cliente="Maria", entrega={**ENTREGA, "endereco": " "})
+    with pytest.raises(ErroNegocio, match="Telefone inválido"):
+        _pedido(banco, p, cliente="Maria", entrega={**ENTREGA, "telefone": "123"})
+    with pytest.raises(ErroNegocio, match="mesa nem comanda"):
+        _pedido(banco, p, cliente="Maria", mesa="4", entrega=ENTREGA)
+    with pytest.raises(ErroNegocio, match="pagamento"):
+        _pedido(banco, p, cliente="Maria", entrega={**ENTREGA, "pagamento": "cheque"})
+    assert banco.ultima_entrega("11987654321") is None
+    pix = _pedido(banco, p, cliente="Maria", entrega={**ENTREGA, "pagamento": "pix"})
+    assert pix["entrega_troco"] == 0  # troco só faz sentido no dinheiro
+    _pedido(banco, p, cliente="Maria Souza", entrega={**ENTREGA, "endereco": "Av. Brasil, 50"})
+    ultimo = banco.ultima_entrega("(11) 98765-4321")
+    assert ultimo == {"cliente": "Maria Souza", "endereco": "Av. Brasil, 50", "bairro": "Centro",
+                      "referencia": "apto 12", "taxa": 700}
+    assert banco.ultima_entrega("lixo") is None
+
+
+def test_delivery_pago_na_entrega_com_parte_abatida(banco, ana):
+    p = _produto(banco, preco=2000)
+    pedido = _pedido(banco, p, 2, cliente="Maria", entrega=ENTREGA)   # 40,00 + 7,00
+    banco.abrir_caixa(0, ana)
+    banco.receber([pedido["id"]], [{"forma": "pix", "valor": 2000}], ana, valor=2000)
+    assert banco.abatido([pedido["id"]])["subtotal"] == 2000
+    banco.receber([pedido["id"]], [{"forma": "dinheiro", "valor": 2700}], ana)
+    assert banco.obter_pedido(pedido["id"])["pago"] is True
+    assert banco.resumo_sessao(banco.sessao_aberta()["id"])["total_vendas"] == 4700

@@ -119,6 +119,8 @@ def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: 
     if pedido.get("cliente"):
         c.linha(f"Cliente: {pedido['cliente']}")
     c.linha(_hora(pedido["criado_em"]))
+    if pedido.get("entrega"):
+        c.cmd(ALINHAR_CENTRO + TAMANHO_DUPLO + NEGRITO_ON).linha("DELIVERY").cmd(TAMANHO_NORMAL + NEGRITO_OFF + ALINHAR_ESQ)
     c.separador()
     # Itens em fonte dupla: é o que o cozinheiro precisa ler de longe.
     largura_dupla = max(10, colunas // 2)
@@ -158,6 +160,10 @@ def cupom_conta(titulo: str, pedidos: list, nome_loja: str, taxa_servico_percent
             valor = item["preco_centavos"] * item["quantidade"]
             subtotal += valor
             _valor(c, f"{item['quantidade']}x {item['nome']}"[: c.colunas - 13], valor)
+    if any(p.get("entrega_taxa") for p in pedidos):
+        taxa_entrega = sum(p.get("entrega_taxa") or 0 for p in pedidos)
+        _valor(c, "Taxa de entrega", taxa_entrega)
+        subtotal += taxa_entrega
     c.separador()
     _valor(c, "Subtotal", subtotal)
     rotulo_total = "Total"
@@ -180,6 +186,64 @@ def cupom_conta(titulo: str, pedidos: list, nome_loja: str, taxa_servico_percent
     else:
         _valor(c, rotulo_total, subtotal, negrito=True)
     c.separador().cmd(ALINHAR_CENTRO).linha("Nao e documento fiscal")
+    return c.bytes()
+
+
+def etiqueta_entrega(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: str = "cp850",
+                     falta_pagar: Optional[int] = None, formas: Optional[dict] = None) -> bytes:
+    """Etiqueta do entregador: vai junto com o pedido de delivery.
+    `falta_pagar`: quanto o entregador tem que cobrar (None = total do pedido;
+    0 = já está pago)."""
+    formas = formas or {}
+    c = Cupom(colunas, codificacao)
+    largura_dupla = max(10, colunas // 2)
+    c.cmd(ALINHAR_CENTRO).linha(nome_loja)
+    c.cmd(TAMANHO_DUPLO + NEGRITO_ON).linha("DELIVERY").linha(f"No {pedido['codigo']}").cmd(TAMANHO_NORMAL + NEGRITO_OFF)
+    c.linha(_hora(pedido["criado_em"])).cmd(ALINHAR_ESQ).separador("=")
+    c.cmd(TAMANHO_DUPLO + NEGRITO_ON).quebrar(pedido.get("cliente") or "Cliente", largura_dupla).cmd(TAMANHO_NORMAL + NEGRITO_OFF)
+    if pedido.get("entrega_telefone_formatado"):
+        c.cmd(NEGRITO_ON).linha(f"Tel: {pedido['entrega_telefone_formatado']}").cmd(NEGRITO_OFF)
+    c.separador()
+    c.linha("ENDERECO:")
+    c.cmd(NEGRITO_ON).quebrar(pedido.get("entrega_endereco") or "", colunas)
+    if pedido.get("entrega_bairro"):
+        c.quebrar(f"Bairro: {pedido['entrega_bairro']}", colunas)
+    c.cmd(NEGRITO_OFF)
+    if pedido.get("entrega_referencia"):
+        c.quebrar(f"Ref./compl.: {pedido['entrega_referencia']}", colunas)
+    c.separador()
+    itens = 0
+    for item in pedido["itens"]:
+        valor = item["preco_centavos"] * item["quantidade"]
+        itens += valor
+        _valor(c, f"{item['quantidade']}x {item['nome']}"[: c.colunas - 13], valor)
+        if item.get("observacao"):
+            c.quebrar(f">> {item['observacao']}", colunas, recuo="   ")
+    if pedido.get("observacao"):
+        c.quebrar(f"Obs: {pedido['observacao']}", colunas)
+    c.separador()
+    if pedido.get("entrega_taxa"):
+        _valor(c, "Itens", itens)
+        _valor(c, "Taxa de entrega", pedido["entrega_taxa"])
+    _valor(c, "Total do pedido", pedido["total_centavos"], negrito=True)
+    c.separador("=")
+    cobrar = pedido["total_centavos"] if falta_pagar is None else falta_pagar
+    c.cmd(ALINHAR_CENTRO + TAMANHO_DUPLO + NEGRITO_ON)
+    if pedido.get("pago") or cobrar <= 0:
+        c.linha("JA PAGO").cmd(TAMANHO_NORMAL + NEGRITO_OFF).linha("Nao cobrar nada na entrega")
+    else:
+        c.linha("COBRAR").linha(moeda(cobrar)).cmd(TAMANHO_NORMAL + NEGRITO_OFF)
+        if cobrar < pedido["total_centavos"]:
+            c.linha(f"(parte ja paga: {moeda(pedido['total_centavos'] - cobrar)})")
+        forma = pedido.get("entrega_pagamento")
+        if forma:
+            c.cmd(NEGRITO_ON).linha(f"Pagamento: {formas.get(forma, forma)}").cmd(NEGRITO_OFF)
+        if forma == "dinheiro" and pedido.get("entrega_troco"):
+            troco = pedido["entrega_troco"] - cobrar
+            c.cmd(NEGRITO_ON).linha(f"Troco para {moeda(pedido['entrega_troco'])}").cmd(NEGRITO_OFF)
+            if troco > 0:
+                c.linha(f"Levar {moeda(troco)} de troco")
+    c.cmd(ALINHAR_ESQ)
     return c.bytes()
 
 

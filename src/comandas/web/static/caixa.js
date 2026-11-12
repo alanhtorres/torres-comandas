@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const { api, moeda, el, minutosDesde, hora, aviso, bip, centavos, reais, campoDinheiro, dialogo } = window.C;
+  const { api, moeda, el, minutosDesde, hora, aviso, bip, centavos, reais, campoDinheiro, dialogo, mascaraTelefone } = window.C;
   const $ = (id) => document.getElementById(id);
   const pode = {
     pedidos: document.body.dataset.podePedidos === "1",
@@ -14,6 +14,7 @@
   let produtos = [];
   let categoriaAtiva = null;
   let carrinho = []; // {produto, quantidade, observacao}
+  let delivery = false; // venda de delivery (endereço de entrega no lugar de mesa/comanda)
   let prontosVistos = null;
   let chamadosVistos = null;
 
@@ -71,9 +72,15 @@
     renderCarrinho();
   }
 
+  function taxaEntrega() {
+    return delivery ? centavos($("dl-taxa").value) || 0 : 0;
+  }
+
   function renderCarrinho() {
-    const total = carrinho.reduce((s, i) => s + i.produto.preco_centavos * i.quantidade, 0);
+    const total = carrinho.reduce((s, i) => s + i.produto.preco_centavos * i.quantidade, 0) + taxaEntrega();
     $("total").textContent = moeda(total);
+    $("linha-taxa-entrega").hidden = !taxaEntrega();
+    $("valor-taxa-entrega").textContent = moeda(taxaEntrega());
     $("qtd-itens").textContent = carrinho.reduce((s, i) => s + i.quantidade, 0);
     $("enviar").disabled = !carrinho.length;
     if ($("enviar-receber")) $("enviar-receber").disabled = !carrinho.length || !estado.caixa_aberto;
@@ -97,7 +104,7 @@
 
   function renderComandas() {
     const sel = $("comanda");
-    $("linha-comanda").hidden = !estado.modo_comandas;
+    $("linha-comanda").hidden = !estado.modo_comandas || delivery;
     if (!estado.modo_comandas) return;
     const atual = sel.value;
     sel.replaceChildren(el("option", { value: "" }, estado.comandas.length ? "— sem comanda (balcão/mesa) —" : "Nenhuma comanda aberta"),
@@ -183,25 +190,111 @@
 
   if ($("abrir-comanda")) $("abrir-comanda").addEventListener("click", dialogoAbrirComanda);
 
+  // --- Delivery --------------------------------------------------------------
+
+  const ultimaTaxa = () => { try { return localStorage.getItem("taxa_entrega") || ""; } catch (e) { return ""; } };
+
+  function usarDelivery(ligar) {
+    delivery = ligar;
+    $("venda-local").classList.toggle("ativo", !ligar);
+    $("venda-delivery").classList.toggle("ativo", ligar);
+    $("campos-delivery").hidden = !ligar;
+    $("campos-local").hidden = ligar;
+    if (ligar && !$("dl-taxa").value) $("dl-taxa").value = ultimaTaxa();
+    renderComandas();
+    renderCarrinho();
+    if (ligar) $("dl-telefone").focus();
+  }
+
+  function limparDelivery() {
+    for (const id of ["dl-telefone", "dl-nome", "dl-endereco", "dl-bairro", "dl-referencia", "dl-troco"]) $(id).value = "";
+    $("dl-pagamento").value = "";
+    $("linha-troco").hidden = true;
+    $("dl-achado").hidden = true;
+    $("dl-taxa").value = ultimaTaxa();
+  }
+
+  // Cliente que já pediu antes: o endereço do último delivery vem preenchido.
+  async function buscarEnderecoAnterior() {
+    const tel = $("dl-telefone").value.replace(/\D/g, "");
+    if (tel.length < 10) return;
+    try {
+      const { entrega } = await api("GET", "/api/delivery/ultimo?telefone=" + encodeURIComponent(tel));
+      if (!entrega) { $("dl-achado").hidden = true; return; }
+      const campos = { "dl-nome": entrega.cliente, "dl-endereco": entrega.endereco, "dl-bairro": entrega.bairro, "dl-referencia": entrega.referencia };
+      let preencheu = false;
+      for (const [id, valor] of Object.entries(campos)) {
+        if (!$(id).value.trim() && valor) { $(id).value = valor; preencheu = true; }
+      }
+      if (preencheu) {
+        $("dl-achado").textContent = "✔ Cliente já pediu antes — nome e endereço preenchidos. Confira se ainda é o mesmo endereço.";
+        $("dl-achado").hidden = false;
+      }
+    } catch (e) { /* sem endereço anterior: digita normalmente */ }
+  }
+
+  function dadosDelivery() {
+    const nome = $("dl-nome").value.trim();
+    if ($("dl-telefone").value.replace(/\D/g, "").length < 10) throw new Error("Informe o telefone do cliente com DDD.");
+    if (!nome) throw new Error("Informe o nome do cliente do delivery.");
+    if (!$("dl-endereco").value.trim()) throw new Error("Informe o endereço de entrega (rua e número).");
+    const taxa = centavos($("dl-taxa").value), troco = centavos($("dl-troco").value);
+    if (Number.isNaN(taxa) || Number.isNaN(troco)) throw new Error("Valor inválido na taxa ou no troco. Use por exemplo 5,00");
+    return {
+      cliente: nome,
+      entrega: {
+        telefone: $("dl-telefone").value, endereco: $("dl-endereco").value, bairro: $("dl-bairro").value,
+        referencia: $("dl-referencia").value, taxa, pagamento: $("dl-pagamento").value, troco,
+      },
+    };
+  }
+
+  function imprimirEtiqueta(p) {
+    if (estado.impressora_caixa_ativa) {
+      acao("POST", `/api/pedidos/${p.id}/etiqueta`, {}, "Etiqueta do entregador enviada para a impressora");
+    } else {
+      window.open("/etiqueta/" + p.id, "_blank", "width=480,height=760");
+    }
+  }
+
+  if (pode.pedidos) {
+    $("venda-local").addEventListener("click", () => usarDelivery(false));
+    $("venda-delivery").addEventListener("click", () => usarDelivery(true));
+    $("dl-pagamento").addEventListener("change", () => {
+      $("linha-troco").hidden = $("dl-pagamento").value !== "dinheiro";
+      if (!$("linha-troco").hidden) $("dl-troco").focus();
+    });
+    $("dl-telefone").addEventListener("input", () => { $("dl-telefone").value = mascaraTelefone($("dl-telefone").value); });
+    $("dl-telefone").addEventListener("change", buscarEnderecoAnterior);
+    $("dl-taxa").addEventListener("input", renderCarrinho);
+  }
+
   function limparCarrinho() {
     carrinho = [];
     $("comanda").value = "";
     $("cliente").value = $("mesa").value = $("obs").value = "";
+    limparDelivery();
     renderCarrinho();
   }
 
   async function enviarPedido(receberDepois) {
     $("enviar").disabled = true;
     try {
-      const r = await api("POST", "/api/pedidos", {
+      const corpo = {
         itens: carrinho.map((i) => ({ produto_id: i.produto.id, quantidade: i.quantidade, observacao: i.observacao })),
         cliente: $("cliente").value, mesa: $("mesa").value, observacao: $("obs").value,
         comanda_id: $("comanda").value || null,
-      });
-      aviso("Pedido nº " + r.pedido.codigo + (r.pedido.setores.length ? " enviado para: " + r.pedido.setores.map((s) => (estado.ambientes || {})[s] || s).join(" e ") : " registrado (sem preparo, já está pronto)"), "ok");
+      };
+      if (delivery) {
+        Object.assign(corpo, dadosDelivery(), { mesa: "", comanda_id: null });
+        try { localStorage.setItem("taxa_entrega", $("dl-taxa").value.trim()); } catch (e) { /* sem memória da taxa */ }
+      }
+      const r = await api("POST", "/api/pedidos", corpo);
+      aviso((r.pedido.entrega ? "🛵 Delivery nº " : "Pedido nº ") + r.pedido.codigo + (r.pedido.setores.length ? " enviado para: " + r.pedido.setores.map((s) => (estado.ambientes || {})[s] || s).join(" e ") : " registrado (sem preparo, já está pronto)"), "ok");
       limparCarrinho();
       monitor.forcar();
-      if (receberDepois) dialogoPagamento([r.pedido], r.pedido.comanda_numero ? "Comanda " + r.pedido.comanda_numero : "Pedido nº " + r.pedido.codigo);
+      if (receberDepois) dialogoPagamento([r.pedido], r.pedido.comanda_numero ? "Comanda " + r.pedido.comanda_numero
+        : (r.pedido.entrega ? "Delivery nº " : "Pedido nº ") + r.pedido.codigo);
     } catch (err) {
       aviso(err.message, "erro");
       renderCarrinho();
@@ -237,7 +330,16 @@
     const botoes = [];
     const chamar = (rotulo, classe) => el("button", { class: classe || "", onclick: () => acao("POST", `/api/pedidos/${p.id}/chamar`, {}, `Pedido ${p.codigo} chamado no painel`) }, rotulo);
     if (pode.pedidos) {
-      if (p.status === "pronto") {
+      if (p.entrega) {
+        // Delivery não vai para o painel: imprime a etiqueta e despacha.
+        if (p.status === "pronto" || p.status === "chamado") {
+          botoes.push(el("button", { class: "verde", onclick: () => imprimirEtiqueta(p) }, "🏷️ Etiqueta do entregador"));
+          botoes.push(el("button", { onclick: () => acao("POST", `/api/pedidos/${p.id}/status`, { status: "entregue" }, `Delivery ${p.codigo} saiu para entrega`) }, "🛵 Saiu para entrega"));
+        } else {
+          botoes.push(el("button", { onclick: () => acao("POST", `/api/pedidos/${p.id}/status`, { status: "pronto" }) }, "Marcar pronto"));
+          botoes.push(el("button", { class: "discreto", title: "Imprimir a etiqueta do entregador agora", onclick: () => imprimirEtiqueta(p) }, "🏷️"));
+        }
+      } else if (p.status === "pronto") {
         botoes.push(chamar("📢 Chamar no painel", "verde"));
       } else if (p.status === "chamado") {
         botoes.push(chamar("🔁 Chamar de novo"));
@@ -260,6 +362,7 @@
     const quem = [p.origem === "qrcode" ? el("span", { class: "etiqueta qrcode" }, "QR code") : null,
       p.origem === "garcom" ? el("span", { class: "etiqueta qrcode" }, "Garçom " + (p.usuario_nome || "")) : null,
       p.comanda_numero ? el("span", { class: "etiqueta chamado" }, "Comanda " + p.comanda_numero) : null,
+      p.entrega ? el("span", { class: "etiqueta delivery" }, "🛵 Delivery") : null,
       p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean);
     return el("div", { class: "pedido " + p.status },
       el("div", { class: "cabeca" },
@@ -273,7 +376,17 @@
         el("strong", {}, moeda(p.total_centavos))),
       el("div", { class: "itens" }, p.itens.map((i) => `${i.quantidade}× ${i.nome}${i.observacao ? " (" + i.observacao + ")" : ""}`).join(" · ")),
       p.observacao ? el("div", { class: "itens", style: "color: var(--amarelo)" }, "Obs: " + p.observacao) : null,
+      p.entrega ? linhaEndereco(p) : null,
       el("div", { class: "acoes" }, botoes));
+  }
+
+  function descreverItens(p) {
+    return p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + (p.entrega_taxa ? " + entrega " + moeda(p.entrega_taxa) : "");
+  }
+
+  function linhaEndereco(p) {
+    return el("div", { class: "endereco-entrega" }, "📍 " + p.entrega_endereco + (p.entrega_bairro ? " — " + p.entrega_bairro : "")
+      + (p.entrega_referencia ? " (" + p.entrega_referencia + ")" : "") + " · 📞 " + p.entrega_telefone_formatado);
   }
 
   function preencherLista(id, contadorId, pedidos, textoVazio) {
@@ -294,10 +407,12 @@
         el("strong", {}, moeda(c.abatido ? c.falta : c.total))),
       c.abatido ? el("div", { class: "ja-pago" }, `Conta ${moeda(c.total)} · já pago ${moeda(c.ja_pago)} · falta ${moeda(c.falta)}`) : null,
       el("ul", {}, c.pedidos.map((p) => el("li", {},
-        `Pedido ${p.codigo} (${hora(p.criado_em)}): ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))),
+        `Pedido ${p.codigo} (${hora(p.criado_em)}): ` + descreverItens(p) + " — " + moeda(p.total_centavos)))),
+      c.pedidos.length === 1 && c.pedidos[0].entrega ? linhaEndereco(c.pedidos[0]) : null,
       c.abatimentos && c.abatimentos.length ? el("ul", { class: "abatimentos" }, c.abatimentos.map((a) => el("li", {},
         `✔ Abatido ${moeda(a.total)} às ${hora(a.criado_em)} (` + a.formas.map((f) => estado.formas[f.forma]).join(" + ") + ")"))) : null,
       el("div", { class: "acoes" },
+        pode.pedidos && c.pedidos.length === 1 && c.pedidos[0].entrega ? el("button", { onclick: () => imprimirEtiqueta(c.pedidos[0]) }, "🏷️ Etiqueta do entregador") : null,
         estado.impressora_caixa_ativa ? el("button", { onclick: () => acao("POST", "/api/contas/imprimir", { pedido_ids: c.pedidos.map((p) => p.id), titulo: c.titulo }, "Conta enviada para a impressora") }, "🖨️ Imprimir conta") : null,
         pode.receber ? el("button", { class: "verde", disabled: !estado.caixa_aberto, title: estado.caixa_aberto ? "" : "Abra o caixa para receber",
           onclick: () => dialogoPagamento(c.pedidos, c.titulo) }, "💲 Receber") : null))));
@@ -347,19 +462,29 @@
 
     // --- resumo da conta
     const itens = el("details", { class: "itens-conta" }, el("summary", {}, `Ver itens (${pedidos.length} pedido${pedidos.length > 1 ? "s" : ""})`),
-      el("ul", {}, pedidos.map((p) => el("li", {}, `Pedido ${p.codigo}: ` + p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)))));
+      el("ul", {}, pedidos.map((p) => el("li", {}, `Pedido ${p.codigo}: ` + descreverItens(p) + " — " + moeda(p.total_centavos)))));
     const linhasResumo = el("div", {});
 
     // --- ajustes (escondidos até tocar)
     const campoDesconto = campoDinheiro({ oninput: () => { st.desconto = centavos(campoDesconto.value) || 0; atualizar(); } });
     const caixaDesconto = el("div", { class: "ajuste-aberto", hidden: true }, el("label", {}, "Desconto (R$)"), campoDesconto);
-    const nPessoas = el("strong", { class: "n-pessoas" }, "2");
+    // Quantas partes: o caixa digita o número (ou usa − e +), de 2 a 50.
+    // (sem min/max no campo: um número fora da faixa escondido travaria o
+    // envio da janela sem mostrar aviso — a faixa é conferida aqui no código)
+    const nPessoas = el("input", { class: "n-pessoas", type: "number", step: 1, inputmode: "numeric",
+      "aria-label": "Dividir em quantas partes", oninput: () => {
+        const n = parseInt(nPessoas.value, 10);
+        if (n >= 2 && n <= 50) { st.pessoas = n; atualizar(false); }
+      }, onblur: () => { nPessoas.value = st.pessoas; } });
+    const mudarPessoas = (d) => { st.pessoas = Math.min(50, Math.max(2, st.pessoas + d)); atualizar(); };
     const caixaDividir = el("div", { class: "ajuste-aberto dividir", hidden: true },
-      el("span", {}, "Dividir em"),
-      el("button", { type: "button", onclick: () => { st.pessoas = Math.max(2, st.pessoas - 1); atualizar(); } }, "−"),
+      el("span", {}, s.totalPessoas ? "Dividir o que falta em" : "Dividir em"),
+      el("button", { type: "button", title: "Uma parte a menos", onclick: () => mudarPessoas(-1) }, "−"),
       nPessoas,
-      el("button", { type: "button", onclick: () => { st.pessoas = Math.min(50, st.pessoas + 1); atualizar(); } }, "+"),
-      el("span", {}, "pessoas"));
+      el("button", { type: "button", title: "Uma parte a mais", onclick: () => mudarPessoas(1) }, "+"),
+      el("span", {}, "partes"),
+      el("span", { class: "atalhos" }, [2, 3, 4, 5, 6].map((n) =>
+        el("button", { type: "button", class: "atalho", onclick: () => { st.pessoas = n; atualizar(); } }, String(n)))));
     const campoOutro = campoDinheiro({ oninput: () => { st.outroValor = campoOutro.value.trim() ? centavos(campoOutro.value) : null; atualizar(); } });
     const caixaOutro = el("div", { class: "ajuste-aberto", hidden: true },
       el("label", {}, "Valor a pagar agora (R$) — o resto continua em aberto na conta"), campoOutro);
@@ -377,9 +502,12 @@
     const bTaxa = taxaPct ? el("button", { type: "button", class: "ajuste" }, `➕ Taxa ${taxaPct}%`) : null;
     if (bTaxa) bTaxa.onclick = () => { st.taxa = !st.taxa; bTaxa.classList.toggle("ligado", st.taxa); atualizar(); };
     const bDividir = el("button", { type: "button", class: "ajuste" }, "➗ Dividir conta");
-    bDividir.onclick = () => alternar(bDividir, caixaDividir,
-      () => { st.pessoas = 2; st.pessoa = 1; st.totalPessoas = 0; fecharOutro(); },
-      () => { st.pessoas = 0; st.totalPessoas = 0; });
+    bDividir.onclick = () => {
+      alternar(bDividir, caixaDividir,
+        () => { st.pessoas = 2; st.pessoa = 1; st.totalPessoas = 0; fecharOutro(); },
+        () => { st.pessoas = 0; st.totalPessoas = 0; });
+      if (!caixaDividir.hidden) nPessoas.select();
+    };
     const bOutro = el("button", { type: "button", class: "ajuste" }, "✏️ Pagar só uma parte");
     function fecharOutro() { caixaOutro.hidden = true; bOutro.classList.remove("ligado"); campoOutro.value = ""; st.outroValor = null; }
     bOutro.onclick = () => alternar(bOutro, caixaOutro, () => {
@@ -409,8 +537,9 @@
 
     function botaoOk() { return janela.elemento.querySelector("button[type=submit]"); }
 
-    function atualizar() {
-      nPessoas.textContent = st.pessoas;
+    function atualizar(mexerNoCampo = true) {
+      if (mexerNoCampo && st.pessoas >= 2) nPessoas.value = st.pessoas;
+      caixaDividir.querySelectorAll(".atalho").forEach((b) => b.classList.toggle("ligado", Number(b.textContent) === st.pessoas));
       const linhas = [el("div", { class: "linha-valor" }, el("span", {}, "Total da conta"), el("span", {}, moeda(conta)))];
       // taxa (ou desconto) que já entrou num pagamento anterior desta conta
       const ajusteAntes = ab.pago - ab.subtotal;
@@ -425,7 +554,7 @@
       const valor = aPagar();
       const valido = !Number.isNaN(valor) && valor >= 0 && valor <= maximo();
       const rotulo = st.pessoas > 1 || st.totalPessoas
-        ? `Pessoa ${st.pessoa} de ${st.totalPessoas || st.pessoas} paga`
+        ? `Parte ${st.pessoa} de ${st.totalPessoas || st.pessoas}`
         : st.outroValor !== null ? "Pagar agora (parte)" : "A pagar";
       valorGrande.replaceChildren(el("span", {}, rotulo), el("strong", { class: valido ? "" : "negativo" }, valido ? moeda(valor) : "valor inválido"));
       if (valido && valor < maximo()) valorGrande.append(el("small", {}, `Depois deste pagamento a conta continua aberta com ${moeda(maximo() - valor)}.`));
@@ -456,7 +585,7 @@
       el("p", { class: "dica" }, "Pagou com duas formas (ex.: parte no Pix e parte no cartão)? Toque em \"Pagar só uma parte\", receba a primeira e depois o resto."));
 
     const janela = dialogo({
-      titulo: "Receber — " + titulo + (st.totalPessoas ? ` (pessoa ${st.pessoa} de ${st.totalPessoas})` : ""),
+      titulo: "Receber — " + titulo + (st.totalPessoas ? ` (parte ${st.pessoa} de ${st.totalPessoas})` : ""),
       corpo, largo: true, confirmar: "Receber",
       aoConfirmar: async () => {
         const valor = aPagar();
@@ -659,6 +788,10 @@
       }
       renderComandas();
       renderCarrinho();
+      if ($("dl-pagamento").options.length <= 1) {
+        $("dl-pagamento").replaceChildren(el("option", { value: "" }, "— não informado —"),
+          ...Object.entries(dados.formas).map(([f, nome]) => el("option", { value: f }, nome)));
+      }
 
       const prontos = dados.pedidos.filter((p) => p.status === "pronto");
       preencherLista("lista-prontos", "n-prontos", prontos, "Nenhum pedido pronto esperando chamada.");

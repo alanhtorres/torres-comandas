@@ -139,3 +139,36 @@ def test_cupom_fechamento_mostra_diferenca():
     for linha in dados.split(b"\n"):
         limpa = linha.replace(impressora.NEGRITO_ON, b"").replace(impressora.NEGRITO_OFF, b"")
         assert len(limpa) <= 40  # cabe na bobina (com folga para comandos)
+
+
+DELIVERY = {
+    "id": 9, "codigo": "15", "origem": "caixa", "mesa": "", "cliente": "Maria José", "criado_em": 1_790_000_000.0,
+    "observacao": "", "entrega": True, "entrega_telefone_formatado": "(11) 98765-4321",
+    "entrega_endereco": "Rua das Flores, 123", "entrega_bairro": "Centro", "entrega_referencia": "portão azul",
+    "entrega_taxa": 700, "entrega_pagamento": "dinheiro", "entrega_troco": 10000, "total_centavos": 6700, "pago": False,
+    "itens": [{"nome": "Pizza grande", "quantidade": 1, "observacao": "sem cebola", "preco_centavos": 6000}],
+}
+
+
+def test_etiqueta_do_entregador_tem_endereco_cobranca_e_troco():
+    dados = impressora.etiqueta_entrega(DELIVERY, "Pizzaria", colunas=48, formas={"dinheiro": "Dinheiro"})
+    for texto in ("DELIVERY", "No 15", "Maria José", "(11) 98765-4321", "Rua das Flores, 123", "Bairro: Centro",
+                  "portão azul", "1x Pizza grande", "sem cebola", "Taxa de entrega", "R$ 7,00", "COBRAR", "R$ 67,00",
+                  "Pagamento: Dinheiro", "Troco para R$ 100,00", "Levar R$ 33,00 de troco"):
+        assert texto.encode("cp850") in dados, texto
+    pago = impressora.etiqueta_entrega({**DELIVERY, "pago": True}, "Pizzaria", falta_pagar=0)
+    assert b"JA PAGO" in pago and b"COBRAR" not in pago
+    parte = impressora.etiqueta_entrega(DELIVERY, "Pizzaria", falta_pagar=4700)
+    assert b"R$ 47,00" in parte and b"parte ja paga: R$ 20,00" in parte
+    for linha in impressora.etiqueta_entrega(DELIVERY, "Pizzaria", colunas=32).split(b"\n"):
+        limpa = linha
+        for cmd in (impressora.NEGRITO_ON, impressora.NEGRITO_OFF, impressora.TAMANHO_DUPLO, impressora.TAMANHO_NORMAL,
+                    impressora.ALINHAR_CENTRO, impressora.ALINHAR_ESQ):
+            limpa = limpa.replace(cmd, b"")
+        assert len(limpa) <= 40
+
+
+def test_cupom_cozinha_e_conta_do_delivery():
+    assert b"DELIVERY" in impressora.cupom_cozinha(DELIVERY, "Pizzaria")
+    conta = impressora.cupom_conta("Delivery 15", [DELIVERY], "Pizzaria")
+    assert b"Taxa de entrega" in conta and b"R$ 67,00" in conta

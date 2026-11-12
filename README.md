@@ -248,8 +248,10 @@ juntos: nunca fica uma coisa sem a outra.
      cliente entregou e o troco aparece.
    - **Desconto**, **Taxa** de serviço, **Dividir conta** e **Pagar só uma parte**
      ficam em botões, escondidos até serem usados.
-   - **Dividir conta** em N pessoas: cada uma paga a sua parte (e pode pagar de um
-     jeito diferente); a janela já reabre para a próxima pessoa.
+   - **Dividir conta**: o caixa digita em quantas partes (de 2 a 50, ou toca nos
+     atalhos 2 a 6). Cada parte é paga separada (e pode ser de um jeito diferente);
+     a janela já reabre para a próxima parte. Os centavos que não dividem certo
+     ficam na primeira parte.
    - **Pagar só uma parte** (abater): o valor pago é descontado e a conta/comanda
      continua aberta com o que falta. Serve também para quem paga com duas formas.
      A comanda só fecha no último pagamento.
@@ -276,6 +278,24 @@ clientes — e escolher **PDF** (para imprimir ou enviar ao contador) ou **plani
 Excel** (uma aba por assunto, com valores e datas de verdade para somar e filtrar).
 O arquivo é gerado no próprio PC e baixa sozinho. Histórico e clientes só aparecem
 para quem tem essas permissões.
+
+## Delivery
+
+1. No caixa, ao montar o pedido, toque em **🛵 Delivery** (no lugar de "No local /
+   balcão") e preencha telefone, nome, endereço, bairro, complemento/referência,
+   **taxa de entrega** (somada ao total) e como o cliente vai pagar na entrega
+   (em dinheiro, o "troco para quanto").
+2. Cliente que já pediu antes: ao digitar o telefone, nome e endereço do último
+   delivery dele já vêm preenchidos. A taxa de entrega usada por último também.
+3. A cozinha vê o pedido marcado **🛵 DELIVERY** (na tela e no cupom impresso).
+   Delivery não é chamado no painel.
+4. Quando fica pronto, o caixa toca em **🏷️ Etiqueta do entregador**: sai na
+   impressora do caixa (ou, sem impressora térmica, abre a etiqueta para imprimir
+   pelo navegador). A etiqueta tem o número do pedido, cliente, telefone, endereço,
+   itens, taxa de entrega, total e quanto **cobrar** (ou "JÁ PAGO"), com a forma de
+   pagamento e o troco a levar.
+5. **🛵 Saiu para entrega** tira o pedido da lista. Se não foi pago antes, ele
+   continua em **A receber** até o entregador voltar com o pagamento.
 
 ## Modo claro
 

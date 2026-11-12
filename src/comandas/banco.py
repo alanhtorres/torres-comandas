@@ -363,6 +363,16 @@ COLUNAS_NOVAS = {
         # Código gerado pelo celular do garçom: o mesmo pedido reenviado (feito
         # sem Wi-Fi, ou resposta perdida no caminho) não é lançado duas vezes.
         "id_cliente": "TEXT NOT NULL DEFAULT ''",
+        # Delivery: endereço de entrega, taxa de entrega (já somada ao
+        # total do pedido) e como o cliente disse que vai pagar ao entregador.
+        "entrega": "INTEGER NOT NULL DEFAULT 0",
+        "entrega_telefone": "TEXT NOT NULL DEFAULT ''",
+        "entrega_endereco": "TEXT NOT NULL DEFAULT ''",
+        "entrega_bairro": "TEXT NOT NULL DEFAULT ''",
+        "entrega_referencia": "TEXT NOT NULL DEFAULT ''",
+        "entrega_taxa": "INTEGER NOT NULL DEFAULT 0",
+        "entrega_pagamento": "TEXT NOT NULL DEFAULT ''",
+        "entrega_troco": "INTEGER NOT NULL DEFAULT 0",
     },
 }
 
@@ -1106,8 +1116,11 @@ class Banco:
 
     def criar_pedido(self, itens: list, origem: str = "caixa", mesa: str = "",
                      cliente: str = "", observacao: str = "", por: Optional[dict] = None,
-                     comanda_id: Optional[int] = None, id_cliente: str = "", feito_em=None) -> dict:
-        """`id_cliente`: código do pedido gerado no celular. Se chegar de novo
+                     comanda_id: Optional[int] = None, id_cliente: str = "", feito_em=None,
+                     entrega: Optional[dict] = None) -> dict:
+        """`entrega`: dados do delivery (telefone, endereco, bairro, referencia,
+        taxa, pagamento, troco) — None = pedido normal.
+        `id_cliente`: código do pedido gerado no celular. Se chegar de novo
         (reenvio da contingência), devolve o mesmo pedido com "ja_existia"."""
         id_cliente = _texto(id_cliente, 64)
         with self.lock:
@@ -1115,13 +1128,55 @@ class Banco:
                 linha = self.conn.execute("SELECT id FROM pedidos WHERE id_cliente = ?", (id_cliente,)).fetchone()
                 if linha:
                     return {**self.obter_pedido(linha["id"]), "ja_existia": True}
-            return self._criar_pedido(itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em)
+            return self._criar_pedido(itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em,
+                                      entrega)
 
-    def _criar_pedido(self, itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em) -> dict:
+    def _validar_entrega(self, entrega: dict, cliente: str, mesa: str, comanda_id) -> dict:
+        if not isinstance(entrega, dict):
+            raise ErroNegocio("Dados do delivery inválidos.")
+        if comanda_id or str(mesa or "").strip():
+            raise ErroNegocio("Pedido de delivery não usa mesa nem comanda.")
+        if not str(cliente or "").strip():
+            raise ErroNegocio("Informe o nome do cliente do delivery.")
+        dados = {
+            "entrega_telefone": normalizar_telefone(entrega.get("telefone"), self.config()["ddd_padrao"]),
+            "entrega_endereco": _texto(entrega.get("endereco"), 200),
+            "entrega_bairro": _texto(entrega.get("bairro"), 80),
+            "entrega_referencia": _texto(entrega.get("referencia"), 200),
+            "entrega_taxa": _centavos(entrega.get("taxa") or 0, "Taxa de entrega"),
+            "entrega_pagamento": str(entrega.get("pagamento") or ""),
+            "entrega_troco": _centavos(entrega.get("troco") or 0, "Troco"),
+        }
+        if not dados["entrega_endereco"]:
+            raise ErroNegocio("Informe o endereço de entrega (rua e número).")
+        if dados["entrega_pagamento"] and dados["entrega_pagamento"] not in FORMAS_PAGAMENTO:
+            raise ErroNegocio("Forma de pagamento do delivery inválida.")
+        if dados["entrega_pagamento"] != "dinheiro":
+            dados["entrega_troco"] = 0
+        return dados
+
+    def ultima_entrega(self, telefone) -> Optional[dict]:
+        """Endereço do último delivery deste telefone (para não digitar de novo)."""
+        try:
+            tel = normalizar_telefone(telefone, self.config()["ddd_padrao"])
+        except ErroNegocio:
+            return None
+        with self.lock:
+            linha = self.conn.execute(
+                "SELECT cliente, entrega_endereco, entrega_bairro, entrega_referencia, entrega_taxa FROM pedidos "
+                "WHERE entrega = 1 AND entrega_telefone = ? ORDER BY id DESC LIMIT 1", (tel,)).fetchone()
+        if not linha:
+            return None
+        return {"cliente": linha["cliente"], "endereco": linha["entrega_endereco"], "bairro": linha["entrega_bairro"],
+                "referencia": linha["entrega_referencia"], "taxa": linha["entrega_taxa"]}
+
+    def _criar_pedido(self, itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em,
+                      entrega=None) -> dict:
         if not isinstance(itens, list) or not itens:
             raise ErroNegocio("O pedido está vazio.")
         if origem not in ORIGENS:
             raise ErroNegocio("Origem do pedido inválida.")
+        dados_entrega = self._validar_entrega(entrega, cliente, mesa, comanda_id) if entrega else None
         comanda = None
         if comanda_id:
             comanda = self._exigir_comanda_aberta(comanda_id)
@@ -1142,6 +1197,8 @@ class Banco:
                 raise ErroNegocio("Um dos produtos não está mais disponível.")
             linhas_itens.append((produto, quantidade, _texto(item.get("observacao"), 200)))
             total += produto["preco_centavos"] * quantidade
+        if dados_entrega:
+            total += dados_entrega["entrega_taxa"]
 
         # Sem nada para preparar (só bebidas, chips...), o pedido já nasce
         # "pronto": não passa pela cozinha nem pela impressora dela. Cozinha e
@@ -1163,6 +1220,10 @@ class Banco:
                  (por or {}).get("id"), (por or {}).get("nome") or "", comanda["id"] if comanda else None, id_cliente),
             )
             pedido_id = cur.lastrowid
+            if dados_entrega:
+                sets = ", ".join(f"{k} = ?" for k in dados_entrega)
+                self.conn.execute(f"UPDATE pedidos SET entrega = 1, {sets} WHERE id = ?",
+                                  (*dados_entrega.values(), pedido_id))
             for setor in preparo:
                 self.conn.execute("INSERT INTO pedido_preparo (pedido_id, setor, status) VALUES (?, ?, 'novo')",
                                   (pedido_id, setor))
@@ -1175,6 +1236,10 @@ class Banco:
                 )
             resumo = ", ".join(f"{q}x {p['nome']}" for p, q, _ in linhas_itens)
             onde = (f" — comanda {comanda['numero']}" if comanda else "") + (f" — mesa {mesa}" if mesa else "")
+            if dados_entrega:
+                onde += f" — delivery para {dados_entrega['entrega_endereco']}"
+                if dados_entrega["entrega_taxa"]:
+                    onde += f" (taxa de entrega {moeda(dados_entrega['entrega_taxa'])})"
             sem_cozinha = "" if aguarda else " — sem preparo, já pronto"
             contingencia = ""
             try:
@@ -1194,6 +1259,9 @@ class Banco:
                 return None
             pedido = dict(linha)
             pedido["pago"] = pedido["recebimento_id"] is not None
+            pedido["entrega"] = bool(pedido.get("entrega"))
+            if pedido["entrega"]:
+                pedido["entrega_telefone_formatado"] = formatar_telefone(pedido["entrega_telefone"])
             pedido["comanda_numero"] = None
             if pedido["comanda_id"]:
                 k = self.conn.execute("SELECT numero FROM comandas WHERE id = ?", (pedido["comanda_id"],)).fetchone()
@@ -1275,9 +1343,13 @@ class Banco:
             onde = f" ({self.nome_destino(setor).lower()})" if setor else ""
             if geral == "cancelado":
                 self._registrar(por, "Cancelou pedido", f"Nº {pedido['codigo']} ({moeda(pedido['total_centavos'])}) — motivo: {motivo}", pedido_id)
+            elif geral == "entregue" and pedido["entrega"]:
+                self._registrar(por, "Saiu para entrega", f"Delivery nº {pedido['codigo']} — {pedido['entrega_endereco']}", pedido_id)
             else:
                 self._registrar(por, self.NOMES_STATUS.get(status, status) + onde, f"Pedido nº {pedido['codigo']}", pedido_id)
-        if geral == "pronto" and pedido["status"] != "pronto" and self.config()["chamar_ao_ficar_pronto"]:
+        # Delivery não é chamado no painel: o caixa imprime a etiqueta e despacha.
+        if (geral == "pronto" and pedido["status"] != "pronto" and self.config()["chamar_ao_ficar_pronto"]
+                and not pedido["entrega"]):
             return self.chamar(pedido_id, por=None)
         return self.obter_pedido(pedido_id)
 
@@ -1286,6 +1358,8 @@ class Banco:
         pedido = self._exigir_pedido(pedido_id)
         if pedido["status"] == "cancelado":
             raise ErroNegocio("Esse pedido foi cancelado.")
+        if pedido["entrega"]:
+            raise ErroNegocio("Pedido de delivery não é chamado no painel: imprima a etiqueta e marque \"Saiu para entrega\".")
         with self._transacao():
             linha = self.conn.execute("SELECT MAX(chamada_seq) AS s FROM pedidos").fetchone()
             agora = self.agora()
@@ -1350,6 +1424,9 @@ class Banco:
                             "SELECT cliente_nome FROM comandas WHERE id = ?", (pedido["comanda_id"],)).fetchone()["cliente_nome"]
                 chave = f"comanda:{pedido['comanda_id']}"
                 titulo = f"Comanda {pedido['comanda_numero']} · {nomes_comanda[pedido['comanda_id']]}"
+            elif pedido["entrega"]:
+                chave = f"pedido:{pedido['id']}"
+                titulo = f"🛵 Delivery nº {pedido['codigo']} · {pedido['cliente']}"
             elif pedido["mesa"]:
                 chave, titulo = "mesa:" + pedido["mesa"], "Mesa " + pedido["mesa"]
             else:

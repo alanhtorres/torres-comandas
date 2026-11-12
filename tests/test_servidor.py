@@ -1019,3 +1019,40 @@ def test_abater_valor_e_conta_dividida_pela_api(ambiente, admin):
     assert r.status_code == 200 and r.get_json()["recebimento"]["parcial"] is False
     estado = caixa.get("/api/estado").get_json()
     assert estado["contas"] == [] and estado["sessao"]["total_vendas"] == 6000 and estado["sessao"]["qtd_vendas"] == 1
+
+
+def test_delivery_pelo_caixa_e_etiqueta(ambiente, admin, impressora_falsa):
+    app, banco, _ = ambiente
+    p = _produto(admin, preco=3000)
+    entrega = {"telefone": "11987654321", "endereco": "Rua A, 10", "bairro": "Centro", "taxa": 500, "pagamento": "pix"}
+    r = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}], "cliente": "João", "entrega": entrega})
+    pedido = r.get_json()["pedido"]
+    assert r.status_code == 200 and pedido["entrega"] is True and pedido["total_centavos"] == 3500
+    assert admin.get("/api/delivery/ultimo?telefone=11987654321").get_json()["entrega"]["endereco"] == "Rua A, 10"
+    # pelo navegador (sem impressora térmica)
+    pagina = admin.get(f"/etiqueta/{pedido['id']}")
+    html = pagina.get_data(as_text=True)
+    assert pagina.status_code == 200 and "Rua A, 10" in html and "COBRAR R$ 35,00" in html and "Pagamento: Pix" in html
+    # impressora do caixa desligada: avisa
+    assert admin.post(f"/api/pedidos/{pedido['id']}/etiqueta").status_code == 400
+    banco.salvar_config({"impressora_caixa_ativa": True, "impressora_caixa_host": "127.0.0.1",
+                         "impressora_caixa_porta": impressora_falsa.porta})
+    assert admin.post(f"/api/pedidos/{pedido['id']}/etiqueta").status_code == 200
+    assert b"Rua A, 10" in impressora_falsa.esperar()[0]
+    # pedido que não é delivery não tem etiqueta
+    normal = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}]}).get_json()["pedido"]
+    assert admin.post(f"/api/pedidos/{normal['id']}/etiqueta").status_code == 400
+    # já pago: a etiqueta avisa para não cobrar
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    admin.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "pix", "valor": 3500}]})
+    assert "JÁ PAGO" in admin.get(f"/etiqueta/{pedido['id']}").get_data(as_text=True)
+
+
+def test_garcom_nao_lanca_delivery(ambiente, admin):
+    app, banco, _ = ambiente
+    criar_usuario(admin, "gar", ["garcom"])
+    garcom = entrar(app, "gar")
+    p = _produto(admin)
+    r = garcom.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}], "mesa": "3", "origem": "garcom",
+                                          "cliente": "X", "entrega": {"telefone": "11987654321", "endereco": "Rua"}})
+    assert r.status_code == 200 and r.get_json()["pedido"]["entrega"] is False

@@ -53,6 +53,28 @@
       <div class="cartao carrinho">
         <h2>Itens <span id="qtd-itens" class="etiqueta">0</span></h2>
         <div id="itens-carrinho"></div>
+        <div class="tipo-venda" role="group" aria-label="Tipo de venda">
+          <button id="venda-local" type="button" class="ativo">🍽️ No local / balcão</button>
+          <button id="venda-delivery" type="button">🛵 Delivery</button>
+        </div>
+        <div id="campos-delivery" class="campos-delivery" hidden>
+          <div class="campos-duplos">
+            <div><label for="dl-telefone">Telefone do cliente</label><input id="dl-telefone" maxlength="20" inputmode="tel" placeholder="(11) 98765-4321"></div>
+            <div><label for="dl-nome">Nome do cliente</label><input id="dl-nome" maxlength="60"></div>
+          </div>
+          <div id="dl-achado" class="dica" hidden></div>
+          <label for="dl-endereco">Endereço (rua e número)</label>
+          <input id="dl-endereco" maxlength="200" placeholder="Ex.: Rua das Flores, 123">
+          <div class="campos-duplos">
+            <div><label for="dl-bairro">Bairro</label><input id="dl-bairro" maxlength="80"></div>
+            <div><label for="dl-referencia">Complemento / referência</label><input id="dl-referencia" maxlength="200" placeholder="Ex.: apto 12, perto da padaria"></div>
+          </div>
+          <div class="campos-duplos">
+            <div><label for="dl-taxa">Taxa de entrega (R$)</label><input id="dl-taxa" inputmode="decimal" placeholder="0,00"></div>
+            <div><label for="dl-pagamento">Como vai pagar na entrega?</label><select id="dl-pagamento"></select></div>
+          </div>
+          <div id="linha-troco" hidden><label for="dl-troco">Troco para quanto? (R$)</label><input id="dl-troco" inputmode="decimal" placeholder="Ex.: 100,00"></div>
+        </div>
         <div id="linha-comanda" hidden>
           <label for="comanda">Comanda do cliente</label>
           <div class="linha-comanda">
@@ -60,12 +82,13 @@
             {% if pode('comandas') %}<button id="abrir-comanda" type="button" class="verde" title="Cadastrar o cliente e abrir a comanda sem sair do caixa">+ Abrir comanda</button>{% endif %}
           </div>
         </div>
-        <div class="campos-duplos">
+        <div id="campos-local" class="campos-duplos">
           <div><label for="cliente">Nome do cliente (aparece no painel)</label><input id="cliente" maxlength="60" placeholder="Opcional"></div>
           <div><label for="mesa">Mesa</label><input id="mesa" maxlength="40" placeholder="Opcional"></div>
         </div>
         <label for="obs">Observação para a cozinha</label>
         <input id="obs" maxlength="300" placeholder="Opcional">
+        <div id="linha-taxa-entrega" class="linha-valor" hidden><span>Taxa de entrega</span><span id="valor-taxa-entrega"></span></div>
         <div class="total-linha"><span>Total</span><strong id="total">R$ 0,00</strong></div>
         <div class="acoes-carrinho">
           <button id="limpar" class="discreto">Limpar</button>

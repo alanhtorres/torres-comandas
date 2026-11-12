@@ -144,7 +144,21 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 .ajuste-aberto.dividir { display: flex; align-items: center; gap: 10px; }
 .ajuste-aberto.dividir[hidden] { display: none; }
 .ajuste-aberto.dividir button { width: 42px; height: 42px; font-size: 1.3rem; padding: 0; }
-.ajuste-aberto .n-pessoas { font-size: 1.4rem; min-width: 2ch; text-align: center; }
+.ajuste-aberto .n-pessoas { font-size: 1.4rem; width: 4.2em; text-align: center; padding: 6px; }
+.ajuste-aberto.dividir { flex-wrap: wrap; }
+.ajuste-aberto .atalhos { display: flex; gap: 6px; margin-left: auto; }
+.ajuste-aberto.dividir .atalho { width: 38px; height: 38px; font-size: 1rem; }
+.ajuste-aberto.dividir .atalho.ligado { background: var(--destaque); color: #0f172a; font-weight: 700; }
+
+/* Delivery */
+.tipo-venda { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
+.tipo-venda button { padding: 10px; font-size: 1rem; }
+.tipo-venda button.ativo { background: var(--destaque); color: #0f172a; font-weight: 700; }
+.campos-delivery { border: 1px solid var(--destaque); border-radius: 10px; padding: 4px 12px 12px; margin-top: 8px; }
+.campos-delivery .dica { color: var(--verde, #22c55e); margin-top: 6px; }
+.endereco-entrega { font-size: 0.9rem; margin-top: 4px; color: var(--texto-2); }
+#linha-taxa-entrega { display: flex; justify-content: space-between; margin-top: 10px; }
+#linha-taxa-entrega[hidden] { display: none; }
 .valor-agora { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px;
   background: var(--fundo); border-radius: 10px; padding: 12px 14px; margin: 4px 0 12px; }
 .valor-agora span { font-size: 1.05rem; color: var(--texto-2); }

@@ -23,7 +23,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from . import impressora
 from .exportar import SECOES, exportar
-from .banco import FORMAS_PAGAMENTO, MODELOS, PERMISSOES, PERMISSOES_ADMIN, PERMISSOES_OPERACIONAIS, Banco, ErroNegocio
+from .banco import FORMAS_PAGAMENTO, MODELOS, PERMISSOES, PERMISSOES_ADMIN, PERMISSOES_OPERACIONAIS, Banco, ErroNegocio, moeda
 
 EXT_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 # Formatos que qualquer navegador de TV/celular toca sem conversão.
@@ -605,7 +605,8 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         pedido = banco.criar_pedido(dados.get("itens"), origem=origem, mesa=dados.get("mesa", ""),
                                     cliente=dados.get("cliente", ""), observacao=dados.get("observacao", ""), por=ator(),
                                     comanda_id=comanda_id, id_cliente=str(dados.get("id_cliente") or ""),
-                                    feito_em=dados.get("feito_em"))
+                                    feito_em=dados.get("feito_em"),
+                                    entrega=dados.get("entrega") if origem == "caixa" else None)
         if pedido.get("ja_existia"):
             # Reenvio do mesmo pedido (contingência do celular): não lança nem imprime de novo.
             return jsonify({"ok": True, "pedido": banco.obter_pedido(pedido["id"]), "ja_existia": True})
@@ -638,6 +639,38 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         onde = " e ".join(banco.nome_destino(s).lower() for s in pedido["setores"])
         banco.registrar_acao(ator(), "Reimprimiu pedido", f"Pedido nº {pedido['codigo']} ({onde})", pedido_id)
         return jsonify({"ok": True})
+
+    # --- Delivery --------------------------------------------------------------
+
+    @app.get("/api/delivery/ultimo")
+    @exigir("pedidos")
+    def api_ultima_entrega():
+        return jsonify({"ok": True, "entrega": banco.ultima_entrega(request.args.get("telefone", ""))})
+
+    def _pedido_entrega(pedido_id) -> tuple:
+        pedido = banco.obter_pedido(pedido_id)
+        if not pedido or not pedido["entrega"]:
+            raise ErroNegocio("Esse pedido não é de delivery.")
+        falta = 0 if pedido["pago"] else max(0, pedido["total_centavos"] - banco.abatido([pedido["id"]])["subtotal"])
+        return pedido, falta
+
+    @app.post("/api/pedidos/<int:pedido_id>/etiqueta")
+    @exigir("pedidos", "receber")
+    def api_imprimir_etiqueta(pedido_id):
+        pedido, falta = _pedido_entrega(pedido_id)
+        _imprimir("caixa", lambda loja, col, cod: impressora.etiqueta_entrega(pedido, loja, col, cod, falta, FORMAS_PAGAMENTO))
+        banco.registrar_acao(ator(), "Imprimiu etiqueta do entregador", f"Delivery nº {pedido['codigo']}", pedido_id)
+        return jsonify({"ok": True})
+
+    @app.get("/etiqueta/<int:pedido_id>")
+    @exigir("pedidos", "receber")
+    def tela_etiqueta(pedido_id):
+        """Etiqueta para imprimir pelo navegador (impressora comum ou sem a térmica do caixa)."""
+        pedido, falta = _pedido_entrega(pedido_id)
+        banco.registrar_acao(ator(), "Imprimiu etiqueta do entregador", f"Delivery nº {pedido['codigo']} (pelo navegador)", pedido_id)
+        return render_template("etiqueta.html", p=pedido, falta=falta, formas=FORMAS_PAGAMENTO,
+                               loja=banco.config()["nome_loja"], moeda=moeda,
+                               hora=datetime.fromtimestamp(pedido["criado_em"]).strftime("%d/%m/%Y %H:%M"))
 
     @app.post("/api/garcom/<int:chamado_id>/atender")
     @exigir("pedidos", "garcom")

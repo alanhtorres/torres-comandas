@@ -44,7 +44,7 @@
         const min = minutosDesde(p.criado_em);
         const classe = "ticket " + situacao(p) + (min >= 20 ? " muito-atrasado" : min >= 10 ? " atrasado" : "");
         const origem = [{ qrcode: "QR code", garcom: "Garçom " + (p.usuario_nome || "") }[p.origem] || "Caixa",
-          p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean).join(" · ");
+          p.entrega ? "🛵 DELIVERY" : null, p.mesa ? "Mesa " + p.mesa : null, p.cliente || null].filter(Boolean).join(" · ");
         const lista = (itens) => itens.map((i) => i.quantidade + "× " + i.nome).join(", ");
         const outroSetor = SETOR === "bar" ? "cozinha" : "bar";
         const doOutro = p.itens.filter((i) => i.setor === outroSetor);

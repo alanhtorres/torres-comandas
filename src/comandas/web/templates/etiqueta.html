@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Etiqueta delivery nº {{ p.codigo }} — {{ loja }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    /* Etiqueta sempre em preto no branco: é para imprimir. */
+    body { background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; margin: 0; }
+    .etiqueta { max-width: 360px; margin: 16px auto; padding: 14px; border: 2px dashed #000; }
+    .centro { text-align: center; }
+    h1 { font-size: 26px; margin: 4px 0; }
+    h2 { font-size: 22px; margin: 6px 0; }
+    .loja { font-size: 14px; }
+    hr { border: 0; border-top: 1px solid #000; margin: 8px 0; }
+    .grosso { border-top-width: 3px; }
+    .rotulo { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+    .endereco { font-size: 18px; font-weight: bold; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    td.v { text-align: right; white-space: nowrap; }
+    .obs { font-size: 12px; padding-left: 12px; }
+    .cobrar { font-size: 26px; font-weight: bold; }
+    .acoes { text-align: center; margin: 12px; }
+    .acoes button { font-size: 16px; padding: 10px 18px; }
+    @media print { .acoes { display: none; } .etiqueta { margin: 0 auto; border: 0; } }
+  </style>
+</head>
+<body>
+  <div class="acoes"><button onclick="window.print()">🖨️ Imprimir</button> <button onclick="window.close()">Fechar</button></div>
+  <div class="etiqueta">
+    <div class="centro">
+      <div class="loja">{{ loja }}</div>
+      <h1>🛵 DELIVERY nº {{ p.codigo }}</h1>
+      <div>{{ hora }}</div>
+    </div>
+    <hr class="grosso">
+    <h2>{{ p.cliente }}</h2>
+    <div><strong>Tel: {{ p.entrega_telefone_formatado }}</strong></div>
+    <hr>
+    <div class="rotulo">Endereço</div>
+    <div class="endereco">{{ p.entrega_endereco }}</div>
+    {% if p.entrega_bairro %}<div class="endereco">Bairro: {{ p.entrega_bairro }}</div>{% endif %}
+    {% if p.entrega_referencia %}<div>Ref./compl.: {{ p.entrega_referencia }}</div>{% endif %}
+    <hr>
+    <table>
+      {% set ns = namespace(itens=0) %}
+      {% for i in p.itens %}{% set ns.itens = ns.itens + i.preco_centavos * i.quantidade %}
+      <tr><td>{{ i.quantidade }}× {{ i.nome }}</td><td class="v">{{ moeda(i.preco_centavos * i.quantidade) }}</td></tr>
+      {% if i.observacao %}<tr><td class="obs" colspan="2">» {{ i.observacao }}</td></tr>{% endif %}
+      {% endfor %}
+    </table>
+    {% if p.observacao %}<div class="obs">Obs: {{ p.observacao }}</div>{% endif %}
+    <hr>
+    <table>
+      {% if p.entrega_taxa %}
+      <tr><td>Itens</td><td class="v">{{ moeda(ns.itens) }}</td></tr>
+      <tr><td>Taxa de entrega</td><td class="v">{{ moeda(p.entrega_taxa) }}</td></tr>
+      {% endif %}
+      <tr><td><strong>Total do pedido</strong></td><td class="v"><strong>{{ moeda(p.total_centavos) }}</strong></td></tr>
+    </table>
+    <hr class="grosso">
+    <div class="centro">
+      {% if p.pago or falta <= 0 %}
+      <div class="cobrar">JÁ PAGO</div>
+      <div>Não cobrar nada na entrega</div>
+      {% else %}
+      <div class="cobrar">COBRAR {{ moeda(falta) }}</div>
+      {% if falta < p.total_centavos %}<div>(parte já paga: {{ moeda(p.total_centavos - falta) }})</div>{% endif %}
+      {% if p.entrega_pagamento %}<div><strong>Pagamento: {{ formas.get(p.entrega_pagamento, p.entrega_pagamento) }}</strong></div>{% endif %}
+      {% if p.entrega_pagamento == 'dinheiro' and p.entrega_troco %}
+      <div><strong>Troco para {{ moeda(p.entrega_troco) }}</strong></div>
+      {% if p.entrega_troco > falta %}<div>Levar {{ moeda(p.entrega_troco - falta) }} de troco</div>{% endif %}
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+  <script>window.addEventListener("load", () => setTimeout(() => window.print(), 300));</script>
+</body>
+</html>
