@@ -82,7 +82,9 @@
     $("linha-taxa-entrega").hidden = !taxaEntrega();
     $("valor-taxa-entrega").textContent = moeda(taxaEntrega());
     $("qtd-itens").textContent = carrinho.reduce((s, i) => s + i.quantidade, 0);
-    $("enviar").disabled = !carrinho.length;
+    // Sem caixa aberto não entra pedido.
+    $("enviar").disabled = !carrinho.length || !estado.caixa_aberto;
+    $("aviso-caixa-fechado").hidden = !!estado.caixa_aberto;
     if ($("enviar-receber")) $("enviar-receber").disabled = !carrinho.length || !estado.caixa_aberto;
     if (!carrinho.length) {
       $("itens-carrinho").replaceChildren(el("div", { class: "vazio" }, "Toque nos produtos acima para adicionar."));
@@ -311,19 +313,68 @@
 
   // --- Lista de pedidos --------------------------------------------------
 
-  function dialogoCancelar(p) {
-    const motivo = el("input", { maxlength: 200, required: true, placeholder: "Ex.: cliente desistiu, lançado errado" });
-    dialogo({
-      titulo: "Cancelar o pedido nº " + p.codigo + "?",
-      corpo: el("div", {}, el("p", {}, p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + " — " + moeda(p.total_centavos)),
-        el("label", {}, "Motivo do cancelamento (fica registrado)"), motivo),
-      confirmar: "Cancelar pedido", cancelar: "Voltar", perigo: true,
-      aoConfirmar: async () => {
+  // Editar pedido: tirar itens (todas ou algumas unidades) ou cancelar o
+  // pedido inteiro — sempre com o motivo, que fica no histórico.
+  function dialogoEditar(p) {
+    const tirar = new Map(); // item_id -> quantas unidades cancelar
+    const motivo = el("input", { maxlength: 200, placeholder: "Ex.: cliente desistiu, lançado errado" });
+    const linhas = el("div", { class: "editar-itens" });
+    const resumo = el("div", { class: "linha-valor destaque" });
+    function render() {
+      linhas.replaceChildren(...p.itens.map((i) => {
+        const livre = i.quantidade - (i.pago_qtd || 0);
+        const n = tirar.get(i.id) || 0;
+        const mudar = (d) => { tirar.set(i.id, Math.min(livre, Math.max(0, n + d))); render(); };
+        return el("div", { class: "editar-item" + (n ? " marcado" : "") },
+          el("div", { class: "nome" }, el("strong", {}, i.quantidade + "× " + i.nome),
+            i.observacao ? el("small", {}, " (" + i.observacao + ")") : null,
+            i.pago_qtd ? el("small", { class: "positivo" }, ` · ${i.pago_qtd} já pago`) : null,
+            el("small", {}, " · " + moeda(i.preco_centavos) + " cada")),
+          livre ? el("div", { class: "qtd-cancelar" },
+            el("span", {}, "Cancelar"),
+            el("button", { type: "button", onclick: () => mudar(-1) }, "−"),
+            el("strong", {}, String(n)),
+            el("button", { type: "button", onclick: () => mudar(1) }, "+"),
+            el("button", { type: "button", class: "discreto", onclick: () => { tirar.set(i.id, n === livre ? 0 : livre); render(); } }, n === livre ? "nenhum" : "todos"))
+            : el("small", {}, "já pago — não dá para cancelar"));
+      }));
+      const valor = p.itens.reduce((t, i) => t + (tirar.get(i.id) || 0) * i.preco_centavos, 0);
+      resumo.replaceChildren(el("span", {}, valor ? "O pedido fica com" : "Total do pedido"), el("span", {}, moeda(p.total_centavos - valor)));
+      const ok = janela && janela.elemento.querySelector("button[type=submit]");
+      if (ok) {
+        const qtd = [...tirar.values()].reduce((a, b) => a + b, 0);
+        ok.disabled = !qtd;
+        ok.textContent = qtd ? `Cancelar ${qtd} ${qtd > 1 ? "itens" : "item"} (${moeda(valor)})` : "Escolha os itens a cancelar";
+      }
+    }
+    const inteiro = el("button", { type: "button", class: "perigo", onclick: async () => {
+      if (!motivo.value.trim()) { motivo.focus(); aviso("Escreva o motivo do cancelamento.", "erro"); return; }
+      if (!confirm(`Cancelar o pedido nº ${p.codigo} inteiro (${moeda(p.total_centavos)})?`)) return;
+      try {
         await api("POST", `/api/pedidos/${p.id}/status`, { status: "cancelado", motivo: motivo.value });
         aviso("Pedido cancelado", "ok");
+        janela.fechar();
+        monitor.forcar();
+      } catch (err) { aviso(err.message, "erro"); }
+    } }, "❌ Cancelar o pedido inteiro");
+    const janela = dialogo({
+      titulo: `Editar pedido nº ${p.codigo}` + (p.mesa ? " · mesa " + p.mesa : "") + (p.cliente ? " · " + p.cliente : ""),
+      largo: true,
+      corpo: el("div", {},
+        el("p", { class: "dica" }, "Toque em + para escolher o que cancelar. O que já foi pago não pode ser cancelado."),
+        linhas, resumo,
+        el("label", {}, "Motivo do cancelamento (obrigatório, fica registrado)"), motivo,
+        el("div", { class: "cancelar-inteiro" }, inteiro)),
+      confirmar: "Escolha os itens a cancelar", cancelar: "Voltar", perigo: true,
+      aoConfirmar: async () => {
+        if (!motivo.value.trim()) throw new Error("Escreva o motivo do cancelamento.");
+        const itens = [...tirar.entries()].filter(([, q]) => q).map(([item_id, quantidade]) => ({ item_id, quantidade }));
+        const r = await api("POST", `/api/pedidos/${p.id}/cancelar-itens`, { itens, motivo: motivo.value });
+        aviso(r.pedido_cancelado ? "Todos os itens saíram: pedido cancelado" : "Itens cancelados. O pedido ficou com " + moeda(r.pedido.total_centavos), "ok");
         monitor.forcar();
       },
     });
+    render();
   }
 
   function cartaoPedido(p) {
@@ -357,7 +408,7 @@
       botoes.push(el("button", { class: "discreto", title: "Receber este pedido", onclick: () => dialogoPagamento([p], "Pedido nº " + p.codigo) }, "💲"));
     }
     if (pode.cancelar && !p.pago) {
-      botoes.push(el("button", { class: "discreto", title: "Cancelar pedido", onclick: () => dialogoCancelar(p) }, "✕"));
+      botoes.push(el("button", { class: "discreto", title: "Editar pedido: cancelar itens ou o pedido inteiro", onclick: () => dialogoEditar(p) }, "✏️ Editar"));
     }
     const quem = [p.origem === "qrcode" ? el("span", { class: "etiqueta qrcode" }, "QR code") : null,
       p.origem === "garcom" ? el("span", { class: "etiqueta qrcode" }, "Garçom " + (p.usuario_nome || "")) : null,
@@ -381,7 +432,8 @@
   }
 
   function descreverItens(p) {
-    return p.itens.map((i) => i.quantidade + "× " + i.nome).join(", ") + (p.entrega_taxa ? " + entrega " + moeda(p.entrega_taxa) : "");
+    return p.itens.map((i) => i.quantidade + "× " + i.nome + (!p.pago && i.pago_qtd ? ` (${i.pago_qtd} pago)` : "")).join(", ")
+      + (p.entrega_taxa ? " + entrega " + moeda(p.entrega_taxa) : "");
   }
 
   function linhaEndereco(p) {
@@ -410,7 +462,8 @@
         `Pedido ${p.codigo} (${hora(p.criado_em)}): ` + descreverItens(p) + " — " + moeda(p.total_centavos)))),
       c.pedidos.length === 1 && c.pedidos[0].entrega ? linhaEndereco(c.pedidos[0]) : null,
       c.abatimentos && c.abatimentos.length ? el("ul", { class: "abatimentos" }, c.abatimentos.map((a) => el("li", {},
-        `✔ Abatido ${moeda(a.total)} às ${hora(a.criado_em)} (` + a.formas.map((f) => estado.formas[f.forma]).join(" + ") + ")"))) : null,
+        `✔ Abatido ${moeda(a.total)} às ${hora(a.criado_em)} (` + a.formas.map((f) => estado.formas[f.forma]).join(" + ") + ")"
+        + (a.itens ? " — " + a.itens : "")))) : null,
       el("div", { class: "acoes" },
         pode.pedidos && c.pedidos.length === 1 && c.pedidos[0].entrega ? el("button", { onclick: () => imprimirEtiqueta(c.pedidos[0]) }, "🏷️ Etiqueta do entregador") : null,
         estado.impressora_caixa_ativa ? el("button", { onclick: () => acao("POST", "/api/contas/imprimir", { pedido_ids: c.pedidos.map((p) => p.id), titulo: c.titulo }, "Conta enviada para a impressora") }, "🖨️ Imprimir conta") : null,
@@ -450,11 +503,17 @@
     const st = {
       desconto: 0, taxa: false, pessoas: s.pessoas || 0, pessoa: s.pessoa || 1, totalPessoas: s.totalPessoas || 0,
       outroValor: null, forma: null,
+      itens: null, // pagamento por item: Map item_id -> quantidade
     };
 
-    const acrescimo = () => (st.taxa ? Math.round(falta * taxaPct / 100) : 0);
+    // Itens que ainda não foram pagos (para o pagamento por item).
+    const itensAbertos = pedidos.flatMap((p) => p.itens.map((i) => ({ ...i, pedido: p.codigo, livre: i.quantidade - (i.pago_qtd || 0) })))
+      .filter((i) => i.livre > 0);
+    const somaItens = () => (st.itens ? itensAbertos.reduce((t, i) => t + (st.itens.get(i.id) || 0) * i.preco_centavos, 0) : 0);
+    const acrescimo = () => (st.taxa ? Math.round((st.itens ? somaItens() : falta) * taxaPct / 100) : 0);
     const maximo = () => Math.max(0, falta - st.desconto + acrescimo());
     function aPagar() {
+      if (st.itens) return somaItens() - st.desconto + acrescimo();
       if (st.outroValor !== null) return st.outroValor;
       if (st.pessoas > 1) return Math.ceil(maximo() / st.pessoas);
       return maximo();
@@ -489,6 +548,25 @@
     const caixaOutro = el("div", { class: "ajuste-aberto", hidden: true },
       el("label", {}, "Valor a pagar agora (R$) — o resto continua em aberto na conta"), campoOutro);
 
+    // Pagamento por item: o cliente escolhe o que consumiu e paga só isso.
+    const caixaItens = el("div", { class: "ajuste-aberto por-item", hidden: true });
+    function renderItens() {
+      caixaItens.replaceChildren(el("div", { class: "dica" }, "Toque em + nos itens que o cliente vai pagar agora:"),
+        ...itensAbertos.map((i) => {
+          const n = st.itens ? st.itens.get(i.id) || 0 : 0;
+          const mudar = (q) => { st.itens.set(i.id, Math.min(i.livre, Math.max(0, q))); renderItens(); atualizar(); };
+          return el("div", { class: "item-pagar" + (n ? " marcado" : "") },
+            el("div", { class: "nome" }, el("strong", {}, i.nome),
+              el("small", {}, ` ${moeda(i.preco_centavos)} cada · falta pagar ${i.livre}` + (i.pago_qtd ? ` (${i.pago_qtd} já pago)` : "")
+                + (pedidos.length > 1 ? ` · pedido ${i.pedido}` : ""))),
+            el("div", { class: "qtd-cancelar" },
+              el("button", { type: "button", onclick: () => mudar(n - 1) }, "−"),
+              el("strong", {}, String(n)),
+              el("button", { type: "button", onclick: () => mudar(n + 1) }, "+"),
+              el("button", { type: "button", class: "discreto", onclick: () => mudar(n === i.livre ? 0 : i.livre) }, n === i.livre ? "nenhum" : "todos")));
+        }));
+    }
+
     function alternar(botao, caixa, ligar, desligar) {
       const aberto = !caixa.hidden;
       caixa.hidden = aberto;
@@ -504,7 +582,7 @@
     const bDividir = el("button", { type: "button", class: "ajuste" }, "➗ Dividir conta");
     bDividir.onclick = () => {
       alternar(bDividir, caixaDividir,
-        () => { st.pessoas = 2; st.pessoa = 1; st.totalPessoas = 0; fecharOutro(); },
+        () => { st.pessoas = 2; st.pessoa = 1; st.totalPessoas = 0; fecharOutro(); fecharItens(); },
         () => { st.pessoas = 0; st.totalPessoas = 0; });
       if (!caixaDividir.hidden) nPessoas.select();
     };
@@ -512,7 +590,16 @@
     function fecharOutro() { caixaOutro.hidden = true; bOutro.classList.remove("ligado"); campoOutro.value = ""; st.outroValor = null; }
     bOutro.onclick = () => alternar(bOutro, caixaOutro, () => {
       if (!caixaDividir.hidden) { caixaDividir.hidden = true; bDividir.classList.remove("ligado"); st.pessoas = 0; }
+      fecharItens();
     }, () => { campoOutro.value = ""; st.outroValor = null; });
+    const bItens = itensAbertos.length ? el("button", { type: "button", class: "ajuste" }, "🧾 Pagar por item") : null;
+    function fecharItens() { if (!bItens) return; caixaItens.hidden = true; bItens.classList.remove("ligado"); st.itens = null; }
+    if (bItens) bItens.onclick = () => alternar(bItens, caixaItens, () => {
+      if (!caixaDividir.hidden) { caixaDividir.hidden = true; bDividir.classList.remove("ligado"); st.pessoas = 0; st.totalPessoas = 0; }
+      fecharOutro();
+      st.itens = new Map();
+      renderItens();
+    }, () => { st.itens = null; });
     if (st.pessoas > 1) { caixaDividir.hidden = false; bDividir.classList.add("ligado"); }
 
     // --- valor a pagar agora
@@ -546,17 +633,27 @@
       if (ajusteAntes > 0) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Taxa de serviço (já cobrada)"), el("span", {}, "+ " + moeda(ajusteAntes))));
       if (ajusteAntes < 0) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Desconto (já dado)"), el("span", {}, "− " + moeda(-ajusteAntes))));
       if (ab.subtotal) linhas.push(el("div", { class: "linha-valor positivo" }, el("span", {}, "Já pago antes (abatido)"), el("span", {}, "− " + moeda(ab.pago))));
-      if (st.desconto) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Desconto"), el("span", {}, "− " + moeda(st.desconto))));
-      if (acrescimo()) linhas.push(el("div", { class: "linha-valor" }, el("span", {}, `Taxa de serviço (${taxaPct}%)`), el("span", {}, "+ " + moeda(acrescimo()))));
-      if (ab.subtotal || st.desconto || acrescimo()) linhas.push(el("div", { class: "linha-valor destaque" }, el("span", {}, "Falta pagar"), el("span", {}, moeda(maximo()))));
+      const ajustes = [
+        st.desconto ? el("div", { class: "linha-valor" }, el("span", {}, "Desconto"), el("span", {}, "− " + moeda(st.desconto))) : null,
+        acrescimo() ? el("div", { class: "linha-valor" }, el("span", {}, `Taxa de serviço (${taxaPct}%)` + (st.itens ? " sobre os itens" : "")),
+          el("span", {}, "+ " + moeda(acrescimo()))) : null].filter(Boolean);
+      if (st.itens) {
+        // por item: o que falta da conta, depois os itens escolhidos e a taxa/desconto deles
+        linhas.push(el("div", { class: "linha-valor destaque" }, el("span", {}, "Falta pagar da conta"), el("span", {}, moeda(falta))));
+        linhas.push(el("div", { class: "linha-valor" }, el("span", {}, "Itens escolhidos"), el("span", {}, moeda(somaItens()))), ...ajustes);
+      } else linhas.push(...ajustes);
+      if (!st.itens && (ab.subtotal || st.desconto || acrescimo())) linhas.push(el("div", { class: "linha-valor destaque" }, el("span", {}, "Falta pagar"), el("span", {}, moeda(maximo()))));
       linhasResumo.replaceChildren(...linhas);
 
       const valor = aPagar();
-      const valido = !Number.isNaN(valor) && valor >= 0 && valor <= maximo();
-      const rotulo = st.pessoas > 1 || st.totalPessoas
+      const valido = !Number.isNaN(valor) && valor >= 0 && valor <= maximo() && (!st.itens || somaItens() > 0)
+        && (!st.itens || st.desconto <= somaItens());
+      const rotulo = st.itens ? "Pagar os itens escolhidos"
+        : st.pessoas > 1 || st.totalPessoas
         ? `Parte ${st.pessoa} de ${st.totalPessoas || st.pessoas}`
         : st.outroValor !== null ? "Pagar agora (parte)" : "A pagar";
-      valorGrande.replaceChildren(el("span", {}, rotulo), el("strong", { class: valido ? "" : "negativo" }, valido ? moeda(valor) : "valor inválido"));
+      valorGrande.replaceChildren(el("span", {}, rotulo), el("strong", { class: valido ? "" : "negativo" },
+        valido ? moeda(valor) : st.itens && !somaItens() ? "escolha os itens" : "valor inválido"));
       if (valido && valor < maximo()) valorGrande.append(el("small", {}, `Depois deste pagamento a conta continua aberta com ${moeda(maximo() - valor)}.`));
       if (st.outroValor !== null && valor > maximo()) valorGrande.append(el("small", { class: "negativo" }, `Passa do que falta (${moeda(maximo())}).`));
 
@@ -576,8 +673,8 @@
 
     const corpo = el("div", { class: "pagamento" },
       el("div", { class: "pagamento-resumo" }, linhasResumo, itens),
-      el("div", { class: "ajustes" }, bDesconto, bTaxa, bDividir, bOutro),
-      caixaDesconto, caixaDividir, caixaOutro,
+      el("div", { class: "ajustes" }, bDesconto, bTaxa, bItens, bDividir, bOutro),
+      caixaDesconto, caixaItens, caixaDividir, caixaOutro,
       valorGrande,
       el("label", {}, "Como o cliente vai pagar?"),
       grade,
@@ -599,6 +696,7 @@
           pedido_ids: pedidos.map((p) => p.id),
           desconto: st.desconto, acrescimo: acrescimo(), valor,
           formas: pago ? [{ forma: st.forma, valor: pago }] : [],
+          itens: st.itens ? [...st.itens.entries()].filter(([, q]) => q).map(([item_id, quantidade]) => ({ item_id, quantidade })) : null,
         });
         const rec = r.recebimento;
         const trocoTxt = rec.troco ? " — troco " + moeda(rec.troco) : "";

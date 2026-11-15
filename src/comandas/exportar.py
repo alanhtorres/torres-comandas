@@ -22,7 +22,7 @@ SECOES = {
     "caixas": ("Abertura e fechamento de caixa", None),
     "movimentos": ("Sangrias e suprimentos", None),
     "estornos": ("Pagamentos estornados", None),
-    "cancelamentos": ("Pedidos cancelados", None),
+    "cancelamentos": ("Pedidos e itens cancelados", None),
     "comandas": ("Comandas do período", None),
     "historico": ("Histórico de ações dos usuários", "historico"),
     "clientes": ("Cadastro de clientes", "clientes"),

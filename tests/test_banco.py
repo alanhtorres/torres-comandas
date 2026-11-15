@@ -234,8 +234,20 @@ def test_pedido_do_cliente_aparece_como_cliente_da_mesa(banco):
 
 # --- Caixa --------------------------------------------------------------------
 
-def test_receber_exige_caixa_aberto(banco, ana):
-    pedido = _pedido(banco, _produto(banco))
+@pytest.mark.caixa_fechado
+def test_pedido_e_recebimento_exigem_caixa_aberto(banco, ana):
+    p = _produto(banco)
+    with pytest.raises(ErroNegocio, match="caixa está fechado"):
+        _pedido(banco, p)
+    with pytest.raises(ErroNegocio, match="caixa está fechado"):
+        _pedido(banco, p, origem="garcom", mesa="3")
+    with pytest.raises(ErroNegocio, match="ainda não abriu o caixa"):
+        _pedido(banco, p, origem="qrcode", mesa="3")
+    banco.abrir_caixa(0, ana)
+    pedido = _pedido(banco, p, id_cliente="cel-1")
+    banco.fechar_caixa(0, "", ana)
+    # reenvio do mesmo pedido (contingência do celular) devolve o que já existe
+    assert _pedido(banco, p, id_cliente="cel-1")["ja_existia"] is True
     with pytest.raises(ErroNegocio, match="fechado"):
         banco.receber([pedido["id"]], [{"forma": "dinheiro", "valor": 2500}], ana)
 
@@ -876,3 +888,69 @@ def test_delivery_pago_na_entrega_com_parte_abatida(banco, ana):
     banco.receber([pedido["id"]], [{"forma": "dinheiro", "valor": 2700}], ana)
     assert banco.obter_pedido(pedido["id"])["pago"] is True
     assert banco.resumo_sessao(banco.sessao_aberta()["id"])["total_vendas"] == 4700
+
+
+# --- Editar pedido (cancelar itens) e pagamento por item ----------------------
+
+def test_cancelar_itens_com_motivo_recalcula_total_e_preparo(banco, ana):
+    lanche = _produto(banco, "X-Burger", 2500)
+    lata = _produto(banco, "Lata", 600, destino="nenhum")
+    pedido = banco.criar_pedido([{"produto_id": lanche["id"], "quantidade": 3}, {"produto_id": lata["id"], "quantidade": 2}], por=ana)
+    burger, refri = pedido["itens"]
+    with pytest.raises(ErroNegocio, match="motivo"):
+        banco.cancelar_itens(pedido["id"], [{"item_id": burger["id"], "quantidade": 1}], " ", por=ana)
+    with pytest.raises(ErroNegocio, match="Só dá para cancelar 3"):
+        banco.cancelar_itens(pedido["id"], [{"item_id": burger["id"], "quantidade": 4}], "erro", por=ana)
+    r = banco.cancelar_itens(pedido["id"], [{"item_id": burger["id"], "quantidade": 1}], "cliente desistiu", por=ana)
+    assert r["pedido"]["total_centavos"] == 2 * 2500 + 2 * 600 and r["pedido"]["itens"][0]["quantidade"] == 2
+    assert r["cancelados"][0]["nome"] == "X-Burger" and r["cancelados"][0]["quantidade"] == 1
+    # tirou todos os lanches: a cozinha não tem mais nada a fazer e o pedido fica pronto
+    r = banco.cancelar_itens(pedido["id"], [{"item_id": burger["id"], "quantidade": 2}], "acabou o pão", por=ana)
+    assert [i["nome"] for i in r["pedido"]["itens"]] == ["Lata"] and r["pedido"]["status"] == "pronto"
+    assert r["pedido"]["preparo"] == {} and r["pedido"]["total_centavos"] == 1200
+    assert "Cancelou itens" in _acoes(banco)
+    # tirando o que sobrou, o pedido inteiro é cancelado
+    r = banco.cancelar_itens(pedido["id"], [{"item_id": refri["id"], "quantidade": 2}], "foi embora", por=ana)
+    assert r["pedido_cancelado"] is True and r["pedido"]["status"] == "cancelado"
+    canc = banco.relatorio("2000-01-01", "2100-01-01")["cancelados"]
+    assert sorted(c["motivo_cancelamento"] for c in canc) == ["acabou o pão", "cliente desistiu", "foi embora"]
+    item = next(c for c in canc if c["motivo_cancelamento"] == "cliente desistiu")
+    assert item["codigo"] == "1 (item: 1× X-Burger)" and item["total_centavos"] == 2500
+
+
+def test_pagar_por_item_e_nao_cancelar_o_que_ja_foi_pago(banco, ana):
+    lanche = _produto(banco, "X-Burger", 3000)
+    suco = _produto(banco, "Suco", 1000)
+    pedido = banco.criar_pedido([{"produto_id": lanche["id"], "quantidade": 2}, {"produto_id": suco["id"], "quantidade": 2}],
+                                mesa="4", por=ana)
+    burger, sucos = pedido["itens"]
+    banco.abrir_caixa(0, ana)
+    # o primeiro cliente paga 1 lanche e 1 suco, com 10% de taxa sobre os itens dele
+    rec = banco.receber([pedido["id"]], [{"forma": "pix", "valor": 4400}], ana, acrescimo=400,
+                        itens=[{"item_id": burger["id"], "quantidade": 1}, {"item_id": sucos["id"], "quantidade": 1}])
+    assert rec["parcial"] is True and rec["subtotal"] == 4000 and rec["total"] == 4400
+    assert "itens: 1× X-Burger, 1× Suco" in rec["descricao"]
+    p = banco.obter_pedido(pedido["id"])
+    assert [i["pago_qtd"] for i in p["itens"]] == [1, 1]
+    conta = banco.contas_abertas()[0]
+    assert conta["falta"] == 4000 and conta["abatimentos"][0]["itens"] == "1× X-Burger, 1× Suco"
+    with pytest.raises(ErroNegocio, match="só falta pagar 1"):
+        banco.receber([pedido["id"]], [{"forma": "pix", "valor": 6000}], ana, itens=[{"item_id": burger["id"], "quantidade": 2}])
+    # o que já foi pago não pode ser cancelado
+    with pytest.raises(ErroNegocio, match="Só dá para cancelar 1 de X-Burger"):
+        banco.cancelar_itens(pedido["id"], [{"item_id": burger["id"], "quantidade": 2}], "erro", por=ana)
+    with pytest.raises(ErroNegocio, match="Estorne o valor abatido"):
+        banco.mudar_status(pedido["id"], "cancelado", por=ana, motivo="erro")
+    # cancelar o suco que falta: a conta fica com só o lanche a pagar
+    banco.cancelar_itens(pedido["id"], [{"item_id": sucos["id"], "quantidade": 1}], "não quis", por=ana)
+    assert banco.contas_abertas()[0]["falta"] == 3000
+    # o segundo paga o que sobrou, por item: fecha a conta
+    rec = banco.receber([pedido["id"]], [{"forma": "dinheiro", "valor": 3000}], ana,
+                        itens=[{"item_id": burger["id"], "quantidade": 1}])
+    assert rec["parcial"] is False and banco.obter_pedido(pedido["id"])["pago"] is True
+    assert banco.contas_abertas() == []
+    # estornar o pagamento por item libera os itens de novo
+    banco.estornar_recebimento(rec["id"], "lançado errado", ana)
+    # (X-Burger: 1 pago no 1º pagamento, 1 liberado; Suco: o que sobrou já estava pago)
+    assert [(i["quantidade"], i["pago_qtd"]) for i in banco.obter_pedido(pedido["id"])["itens"]] == [(2, 1), (1, 1)]
+    assert banco.contas_abertas()[0]["falta"] == 3000

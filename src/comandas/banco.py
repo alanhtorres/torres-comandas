@@ -260,6 +260,26 @@ CREATE TABLE IF NOT EXISTS recebimento_abatimentos (
     pedido_id INTEGER NOT NULL REFERENCES pedidos(id)
 );
 CREATE INDEX IF NOT EXISTS idx_abatimentos_pedido ON recebimento_abatimentos(pedido_id);
+-- Pagamento por item: quais itens (e quantas unidades) cada pagamento pagou.
+CREATE TABLE IF NOT EXISTS recebimento_itens (
+    recebimento_id INTEGER NOT NULL REFERENCES recebimentos(id),
+    item_id INTEGER NOT NULL REFERENCES pedido_itens(id),
+    quantidade INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recebimento_itens_item ON recebimento_itens(item_id);
+-- Itens tirados de um pedido (cancelados com motivo). O item some do pedido
+-- e fica registrado aqui.
+CREATE TABLE IF NOT EXISTS itens_cancelados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pedido_id INTEGER NOT NULL REFERENCES pedidos(id),
+    nome TEXT NOT NULL,
+    preco_centavos INTEGER NOT NULL,
+    quantidade INTEGER NOT NULL,
+    motivo TEXT NOT NULL,
+    usuario_nome TEXT NOT NULL,
+    criado_em REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_itens_cancelados_data ON itens_cancelados(criado_em);
 CREATE TABLE IF NOT EXISTS recebimento_formas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     recebimento_id INTEGER NOT NULL REFERENCES recebimentos(id),
@@ -1128,6 +1148,11 @@ class Banco:
                 linha = self.conn.execute("SELECT id FROM pedidos WHERE id_cliente = ?", (id_cliente,)).fetchone()
                 if linha:
                     return {**self.obter_pedido(linha["id"]), "ja_existia": True}
+            # Sem caixa aberto não entra pedido (nem pelo garçom, nem pelo QR code).
+            if not self.sessao_aberta():
+                if origem == "qrcode":
+                    raise ErroNegocio("A loja ainda não abriu o caixa. Chame o garçom.")
+                raise ErroNegocio("O caixa está fechado. Abra o caixa antes de lançar pedidos.")
             return self._criar_pedido(itens, origem, mesa, cliente, observacao, por, comanda_id, id_cliente, feito_em,
                                       entrega)
 
@@ -1268,9 +1293,13 @@ class Banco:
                 pedido["comanda_numero"] = k["numero"] if k else None
             pedido["itens"] = []
             for i in self.conn.execute(
-                    "SELECT produto_id, nome, preco_centavos, quantidade, observacao, vai_cozinha, setor "
-                    "FROM pedido_itens WHERE pedido_id = ? ORDER BY id", (pedido_id,)):
+                    "SELECT i.id, i.produto_id, i.nome, i.preco_centavos, i.quantidade, i.observacao, i.vai_cozinha, i.setor, "
+                    "(SELECT COALESCE(SUM(ri.quantidade), 0) FROM recebimento_itens ri JOIN recebimentos r "
+                    " ON r.id = ri.recebimento_id WHERE ri.item_id = i.id AND r.estornado_em IS NULL) AS pago_qtd "
+                    "FROM pedido_itens i WHERE i.pedido_id = ? ORDER BY i.id", (pedido_id,)):
                 item = {**dict(i), "vai_cozinha": bool(i["vai_cozinha"])}
+                if pedido["pago"]:
+                    item["pago_qtd"] = item["quantidade"]
                 item["setor"] = setor_do_item(item)
                 pedido["itens"].append(item)
             pedido["vai_cozinha"] = any(i["vai_cozinha"] for i in pedido["itens"])
@@ -1324,6 +1353,7 @@ class Banco:
         if geral == "cancelado":
             if pedido["pago"]:
                 raise ErroNegocio("Esse pedido já foi pago. Estorne o pagamento antes de cancelar.")
+            self._conferir_abatido_depois(pedido, pedido["total_centavos"])
             motivo = _texto(motivo, 200)
             if not motivo:
                 raise ErroNegocio("Informe o motivo do cancelamento.")
@@ -1461,7 +1491,101 @@ class Banco:
                     "SELECT forma, valor FROM recebimento_formas WHERE recebimento_id = ? ORDER BY id", (l["id"],))]
                 l["pedido_ids"] = [a["pedido_id"] for a in self.conn.execute(
                     "SELECT pedido_id FROM recebimento_abatimentos WHERE recebimento_id = ?", (l["id"],))]
+                l["itens"] = self._itens_do_recebimento(l["id"])
         return {"subtotal": sum(l["subtotal"] for l in linhas), "pago": sum(l["total"] for l in linhas), "lista": linhas}
+
+    def _itens_do_recebimento(self, rid: int) -> str:
+        """"2× X-Burger, 1× Suco" — itens pagos num pagamento por item."""
+        return ", ".join(f"{l['quantidade']}× {l['nome']}" for l in self.conn.execute(
+            "SELECT ri.quantidade, i.nome FROM recebimento_itens ri JOIN pedido_itens i ON i.id = ri.item_id "
+            "WHERE ri.recebimento_id = ? ORDER BY ri.rowid", (rid,)))
+
+    def _conferir_abatido_depois(self, pedido: dict, tirar: int) -> None:
+        """Não deixa a conta ficar menor do que o que já foi abatido dela."""
+        ab = self.abatido([pedido["id"]])
+        if not ab["subtotal"]:
+            return
+        ids = sorted({i for a in ab["lista"] for i in a["pedido_ids"]})
+        ab = self.abatido(ids)
+        conta = sum(p["total_centavos"] for p in (self.obter_pedido(i) for i in ids)
+                    if p and p["status"] != "cancelado" and not p["pago"])
+        if conta - tirar < ab["subtotal"]:
+            raise ErroNegocio(f"Já foi pago {moeda(ab['subtotal'])} desta conta: ela não pode ficar menor do que isso. "
+                              "Estorne o valor abatido na aba Recebidos antes de cancelar.")
+
+    def cancelar_itens(self, pedido_id: int, itens: list, motivo: str, por: Optional[dict] = None) -> dict:
+        """Tira itens de um pedido (todas ou só algumas unidades), com motivo.
+        Devolve {"pedido": ..., "cancelados": [{nome, quantidade, setor...}]}.
+        Se não sobrar nada, o pedido inteiro é cancelado."""
+        pedido = self._exigir_pedido(pedido_id)
+        if pedido["status"] == "cancelado":
+            raise ErroNegocio("Esse pedido já foi cancelado.")
+        if pedido["pago"]:
+            raise ErroNegocio("Esse pedido já foi pago. Estorne o pagamento antes de cancelar itens.")
+        motivo = _texto(motivo, 200)
+        if not motivo:
+            raise ErroNegocio("Informe o motivo do cancelamento.")
+        if not isinstance(itens, list) or not itens:
+            raise ErroNegocio("Escolha os itens a cancelar.")
+        por_id = {i["id"]: i for i in pedido["itens"]}
+        tirar = {}
+        for x in itens:
+            try:
+                item_id, qtd = int((x or {}).get("item_id")), int((x or {}).get("quantidade", 0))
+            except (TypeError, ValueError):
+                raise ErroNegocio("Item inválido.")
+            if item_id not in por_id:
+                raise ErroNegocio("Esse item não é deste pedido.")
+            if qtd < 0:
+                raise ErroNegocio("Quantidade inválida.")
+            if qtd:
+                tirar[item_id] = tirar.get(item_id, 0) + qtd
+        if not tirar:
+            raise ErroNegocio("Escolha os itens a cancelar.")
+        for item_id, qtd in tirar.items():
+            item = por_id[item_id]
+            livre = item["quantidade"] - item["pago_qtd"]
+            if qtd > livre:
+                raise ErroNegocio(f"Só dá para cancelar {livre} de {item['nome']}"
+                                  + (" (o resto já foi pago)." if item["pago_qtd"] else "."))
+        sobra = sum(i["quantidade"] for i in pedido["itens"]) - sum(tirar.values())
+        cancelados = [{**por_id[i], "quantidade": q} for i, q in tirar.items()]
+        if sobra <= 0:
+            # Tirou tudo: é o pedido inteiro que está sendo cancelado.
+            return {"pedido": self.mudar_status(pedido_id, "cancelado", por=por, motivo=motivo), "cancelados": cancelados,
+                    "pedido_cancelado": True}
+        valor = sum(por_id[i]["preco_centavos"] * q for i, q in tirar.items())
+        self._conferir_abatido_depois(pedido, valor)
+        with self._transacao():
+            agora = self.agora()
+            for item_id, qtd in tirar.items():
+                item = por_id[item_id]
+                if qtd >= item["quantidade"]:
+                    self.conn.execute("DELETE FROM pedido_itens WHERE id = ?", (item_id,))
+                else:
+                    self.conn.execute("UPDATE pedido_itens SET quantidade = quantidade - ? WHERE id = ?", (qtd, item_id))
+                self.conn.execute(
+                    "INSERT INTO itens_cancelados (pedido_id, nome, preco_centavos, quantidade, motivo, usuario_nome, criado_em) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (pedido_id, item["nome"], item["preco_centavos"], qtd, motivo, (por or {}).get("nome") or "Sistema", agora))
+            self.conn.execute("UPDATE pedidos SET total_centavos = total_centavos - ?, atualizado_em = ? WHERE id = ?",
+                              (valor, agora, pedido_id))
+            # Tela de preparo que ficou sem nada deste pedido sai dele; se o
+            # que sobrou já está pronto, o pedido fica pronto.
+            restantes = {setor_do_item(dict(i)) for i in self.conn.execute(
+                "SELECT vai_cozinha, setor FROM pedido_itens WHERE pedido_id = ?", (pedido_id,))}
+            for setor in pedido["preparo"]:
+                if setor not in restantes:
+                    self.conn.execute("DELETE FROM pedido_preparo WHERE pedido_id = ? AND setor = ?", (pedido_id, setor))
+            if pedido["status"] in ("novo", "preparando"):
+                preparo = [l["status"] for l in self.conn.execute(
+                    "SELECT status FROM pedido_preparo WHERE pedido_id = ?", (pedido_id,))]
+                if all(st == "pronto" for st in preparo):
+                    self.conn.execute("UPDATE pedidos SET status = 'pronto', pronto_em = ? WHERE id = ?", (agora, pedido_id))
+            resumo = ", ".join(f"{q}× {por_id[i]['nome']}" for i, q in tirar.items())
+            self._registrar(por, "Cancelou itens", f"Pedido nº {pedido['codigo']}: {resumo} ({moeda(valor)}) — motivo: {motivo}",
+                            pedido_id)
+        return {"pedido": self.obter_pedido(pedido_id), "cancelados": cancelados, "pedido_cancelado": False}
 
     # --- Clientes ---------------------------------------------------------
 
@@ -1850,14 +1974,19 @@ class Banco:
             self._registrar(por, "Fez sangria" if tipo == "sangria" else "Fez suprimento", f"{moeda(valor)} — {motivo}")
         return self.resumo_sessao(sessao["id"])
 
-    def receber(self, pedido_ids: list, formas: list, por: dict, desconto=0, acrescimo=0, valor=None) -> dict:
+    def receber(self, pedido_ids: list, formas: list, por: dict, desconto=0, acrescimo=0, valor=None,
+                itens: Optional[list] = None) -> dict:
         """Registra o pagamento de um ou mais pedidos (ex.: a conta inteira
         da mesa), podendo dividir entre várias formas. Se entrar mais
         dinheiro do que o devido, a sobra é o troco.
 
         Com "valor" menor do que falta pagar, é um valor abatido (conta
         dividida, ou alguém que pagou a parte dele e foi embora): a conta
-        continua em aberto com o que sobrou."""
+        continua em aberto com o que sobrou.
+
+        Com "itens" ([{item_id, quantidade}]), é o pagamento por item: o valor
+        é a soma desses itens (com o desconto e a taxa informados) e eles
+        ficam marcados como pagos."""
         sessao = self._exigir_sessao()
         if not isinstance(pedido_ids, list) or not pedido_ids:
             raise ErroNegocio("Selecione o que vai ser pago.")
@@ -1889,6 +2018,32 @@ class Banco:
                               "Estorne um dos valores abatidos na aba Recebidos.")
         desconto = _centavos(desconto, "desconto")
         acrescimo = _centavos(acrescimo, "acréscimo")
+        pagar_itens = {}
+        if itens:
+            por_id = {i["id"]: (p, i) for p in pedidos for i in p["itens"]}
+            if not isinstance(itens, list):
+                raise ErroNegocio("Itens inválidos.")
+            for x in itens:
+                try:
+                    item_id, qtd = int((x or {}).get("item_id")), int((x or {}).get("quantidade", 0))
+                except (TypeError, ValueError):
+                    raise ErroNegocio("Item inválido.")
+                if item_id not in por_id or qtd < 0:
+                    raise ErroNegocio("Esse item não é desta conta.")
+                if qtd:
+                    pagar_itens[item_id] = pagar_itens.get(item_id, 0) + qtd
+            if not pagar_itens:
+                raise ErroNegocio("Escolha os itens que vão ser pagos.")
+            soma = 0
+            for item_id, qtd in pagar_itens.items():
+                item = por_id[item_id][1]
+                livre = item["quantidade"] - item["pago_qtd"]
+                if qtd > livre:
+                    raise ErroNegocio(f"{item['nome']}: só falta pagar {livre}.")
+                soma += item["preco_centavos"] * qtd
+            if desconto > soma:
+                raise ErroNegocio("O desconto é maior do que os itens escolhidos.")
+            valor = soma - desconto + acrescimo
         if desconto > subtotal:
             raise ErroNegocio("O desconto é maior do que falta pagar.")
         maximo = subtotal - desconto + acrescimo
@@ -1933,6 +2088,9 @@ class Banco:
         descricao = (("Valor abatido — " if parcial else "")
                      + (f"Comanda {', '.join(comandas)} — " if comandas else "")
                      + (f"Mesa {', '.join(mesas)} — " if mesas else "") + f"pedido(s) {codigos}")
+        if pagar_itens:
+            nomes = {i["id"]: i["nome"] for p in pedidos for i in p["itens"]}
+            descricao += " — itens: " + ", ".join(f"{q}× {nomes[i]}" for i, q in pagar_itens.items())
         with self._transacao():
             cur = self.conn.execute(
                 "INSERT INTO recebimentos (sessao_id, usuario_id, usuario_nome, descricao, subtotal, desconto, "
@@ -1944,6 +2102,9 @@ class Banco:
             for forma, v in valores.items():
                 self.conn.execute("INSERT INTO recebimento_formas (recebimento_id, forma, valor) VALUES (?, ?, ?)",
                                   (rid, forma, v))
+            for item_id, qtd in pagar_itens.items():
+                self.conn.execute("INSERT INTO recebimento_itens (recebimento_id, item_id, quantidade) VALUES (?, ?, ?)",
+                                  (rid, item_id, qtd))
             if parcial:
                 for p in pedidos:
                     self.conn.execute("INSERT INTO recebimento_abatimentos (recebimento_id, pedido_id) VALUES (?, ?)",
@@ -2138,6 +2299,15 @@ class Banco:
             cancelados = [dict(l) for l in self.conn.execute(
                 "SELECT codigo, mesa, total_centavos, cancelado_por_nome, motivo_cancelamento, atualizado_em FROM pedidos "
                 "WHERE status = 'cancelado' AND atualizado_em >= ? AND atualizado_em < ? ORDER BY atualizado_em", (ini, fim))]
+            # Itens tirados de pedidos (o resto do pedido continuou valendo).
+            for l in self.conn.execute(
+                    "SELECT c.*, p.codigo, p.mesa FROM itens_cancelados c JOIN pedidos p ON p.id = c.pedido_id "
+                    "WHERE c.criado_em >= ? AND c.criado_em < ?", (ini, fim)):
+                cancelados.append({"codigo": f"{l['codigo']} (item: {l['quantidade']}× {l['nome']})", "mesa": l["mesa"],
+                                   "total_centavos": l["preco_centavos"] * l["quantidade"],
+                                   "cancelado_por_nome": l["usuario_nome"], "motivo_cancelamento": l["motivo"],
+                                   "atualizado_em": l["criado_em"]})
+            cancelados.sort(key=lambda c: c["atualizado_em"])
             sessoes_ids = [l["id"] for l in self.conn.execute(
                 "SELECT id FROM sessoes_caixa WHERE aberto_em >= ? AND aberto_em < ? ORDER BY id", (ini, fim))]
             pendentes = dict(self.conn.execute(

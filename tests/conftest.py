@@ -52,3 +52,49 @@ def impressora_falsa():
     f = ImpressoraFalsa()
     yield f
     f.fechar()
+
+
+# Desde a 3.5.0 não entra pedido com o caixa fechado. Para os testes antigos
+# (que lançam pedidos sem se preocupar com o caixa) não precisarem abrir o
+# caixa um por um, o caixa abre sozinho no primeiro pedido — como um caixa
+# "automático" sem fundo de troco e sem registro no histórico. Se o teste
+# depois abrir o caixa de verdade, esse automático some antes (enquanto não
+# tiver nenhum pagamento). Teste marcado com @pytest.mark.caixa_fechado vê
+# o comportamento real.
+AUTOMATICO = "Caixa automático dos testes"
+
+
+@pytest.fixture(autouse=True)
+def caixa_automatico(request, monkeypatch):
+    if request.node.get_closest_marker("caixa_fechado"):
+        return
+    from comandas.banco import Banco
+
+    criar, abrir = Banco.criar_pedido, Banco.abrir_caixa
+
+    def criar_pedido(self, *args, **kwargs):
+        if not self.sessao_aberta():
+            with self.lock:
+                self.conn.execute("INSERT INTO sessoes_caixa (aberto_por_nome, aberto_em, valor_abertura) VALUES (?, ?, 0)",
+                                  (AUTOMATICO, self.agora()))
+                self.conn.commit()
+        return criar(self, *args, **kwargs)
+
+    def abrir_caixa(self, *args, **kwargs):
+        sessao = self.sessao_aberta()
+        if sessao and sessao["aberto_por_nome"] == AUTOMATICO:
+            with self.lock:
+                usado = self.conn.execute(
+                    "SELECT (SELECT COUNT(*) FROM recebimentos WHERE sessao_id = ?) + "
+                    "(SELECT COUNT(*) FROM movimentos_caixa WHERE sessao_id = ?) AS n", (sessao["id"], sessao["id"])).fetchone()["n"]
+                if not usado:
+                    self.conn.execute("DELETE FROM sessoes_caixa WHERE id = ?", (sessao["id"],))
+                    self.conn.commit()
+        return abrir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Banco, "criar_pedido", criar_pedido)
+    monkeypatch.setattr(Banco, "abrir_caixa", abrir_caixa)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "caixa_fechado: sem o caixa automático dos testes (pedido exige caixa aberto)")

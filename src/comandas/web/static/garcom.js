@@ -401,6 +401,7 @@
 
   function aplicar(dados, doCelular) {
     estado = dados;
+    $("caixa-fechado").hidden = doCelular || dados.caixa_aberto !== false;
     if (!doCelular) {
       guardarEstado(dados);
       enviarFila();  // conexão de volta: manda o que ficou guardado

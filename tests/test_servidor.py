@@ -168,18 +168,23 @@ def test_trocar_propria_senha(ambiente, admin):
 
 # --- Fluxo de pedido e caixa --------------------------------------------------
 
+@pytest.mark.caixa_fechado
 def test_fluxo_completo_pedido_caixa_cozinha_painel_e_pagamento(ambiente, admin):
     app, banco, _ = ambiente
     criar_usuario(admin, "caixa", ["pedidos", "receber", "caixa"])
     caixa = entrar(app, "caixa")
     p = _produto(admin)
-    r = caixa.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 2}], "cliente": "Maria"})
+    corpo = {"itens": [{"produto_id": p["id"], "quantidade": 2}], "cliente": "Maria"}
+    r = caixa.post("/api/pedidos", json=corpo)
+    assert r.status_code == 400 and "caixa está fechado" in r.get_json()["erro"]
+    assert caixa.post("/api/caixa/abrir", json={"valor_abertura": 10000}).status_code == 200
+    r = caixa.post("/api/pedidos", json=corpo)
     pedido = r.get_json()["pedido"]
     assert pedido["total_centavos"] == 5000 and pedido["usuario_nome"] == "Caixa"
 
     estado = caixa.get("/api/estado").get_json()
     assert [x["codigo"] for x in estado["pedidos"]] == ["1"]
-    assert estado["contas"][0]["total"] == 5000 and estado["caixa_aberto"] is False
+    assert estado["contas"][0]["total"] == 5000 and estado["caixa_aberto"] is True
     versao = estado["versao"]
     assert caixa.get(f"/api/estado?v={versao}").get_json() == {"versao": versao, "mudou": False}
 
@@ -187,8 +192,6 @@ def test_fluxo_completo_pedido_caixa_cozinha_painel_e_pagamento(ambiente, admin)
     caixa.post(f"/api/pedidos/{pedido['id']}/chamar")
     assert app.test_client().get("/api/painel").get_json()["chamadas"][0]["cliente"] == "Maria"
 
-    assert caixa.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "pix", "valor": 5000}]}).status_code == 400
-    assert caixa.post("/api/caixa/abrir", json={"valor_abertura": 10000}).status_code == 200
     r = caixa.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "formas": [{"forma": "dinheiro", "valor": 10000}]})
     assert r.get_json()["recebimento"]["troco"] == 5000
 
@@ -1056,3 +1059,28 @@ def test_garcom_nao_lanca_delivery(ambiente, admin):
     r = garcom.post("/api/pedidos", json={"itens": [{"produto_id": p["id"]}], "mesa": "3", "origem": "garcom",
                                           "cliente": "X", "entrega": {"telefone": "11987654321", "endereco": "Rua"}})
     assert r.status_code == 200 and r.get_json()["pedido"]["entrega"] is False
+
+
+def test_editar_pedido_cancela_itens_imprime_na_cozinha_e_paga_por_item(ambiente, admin, impressora_falsa):
+    app, banco, _ = ambiente
+    banco.salvar_config({"impressora_cozinha_ativa": True, "impressora_cozinha_host": "127.0.0.1",
+                         "impressora_cozinha_porta": impressora_falsa.porta})
+    p = _produto(admin, "Pastel", 800)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": p["id"], "quantidade": 3}], "mesa": "2"}).get_json()["pedido"]
+    impressora_falsa.esperar()
+    item = pedido["itens"][0]
+    criar_usuario(admin, "semcancelar", ["pedidos", "receber"])
+    outro = entrar(app, "semcancelar")
+    corpo = {"itens": [{"item_id": item["id"], "quantidade": 1}], "motivo": "caiu no chão"}
+    assert outro.post(f"/api/pedidos/{pedido['id']}/cancelar-itens", json=corpo).status_code == 403
+    r = admin.post(f"/api/pedidos/{pedido['id']}/cancelar-itens", json=corpo)
+    assert r.status_code == 200 and r.get_json()["pedido"]["total_centavos"] == 1600
+    cupom = impressora_falsa.esperar(2)[1]
+    assert b"CANCELADO" in cupom and b"1x Pastel" in cupom and "caiu no chão".encode("cp850") in cupom
+    # pagamento por item pela API
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    r = admin.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "itens": [{"item_id": item["id"], "quantidade": 1}],
+                                              "formas": [{"forma": "pix", "valor": 800}]})
+    assert r.status_code == 200 and r.get_json()["recebimento"]["parcial"] is True
+    estado = admin.get("/api/estado").get_json()
+    assert estado["contas"][0]["falta"] == 800 and estado["pedidos"][0]["itens"][0]["pago_qtd"] == 1

@@ -786,7 +786,7 @@
           secao("Pagamentos estornados", tabela(["Quando", "O quê", "Valor", "Quem estornou / motivo"], r.estornos.map((e) =>
             el("tr", {}, el("td", {}, dataHora(e.estornado_em)), el("td", {}, e.descricao), el("td", {}, moeda(e.total)),
               el("td", {}, e.estornado_por_nome, el("div", { class: "dica" }, e.motivo_estorno)))))),
-          secao("Pedidos cancelados", tabela(["Quando", "Pedido", "Valor", "Quem cancelou / motivo"], r.cancelados.map((c) =>
+          secao("Pedidos e itens cancelados", tabela(["Quando", "Pedido", "Valor", "Quem cancelou / motivo"], r.cancelados.map((c) =>
             el("tr", {}, el("td", {}, dataHora(c.atualizado_em)), el("td", {}, "Nº " + c.codigo + (c.mesa ? " · mesa " + c.mesa : "")),
               el("td", {}, moeda(c.total_centavos)), el("td", {}, c.cancelado_por_nome, el("div", { class: "dica" }, c.motivo_cancelamento)))))))].filter(Boolean));
     }

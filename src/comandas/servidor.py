@@ -590,6 +590,21 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         _em_segundo_plano(trabalho)
         return True
 
+    def _imprimir_cancelamento(pedido: dict, itens: list, motivo: str, inteiro: bool) -> None:
+        """Avisa na impressora de cada ambiente o que foi cancelado (o cupom
+        do pedido já tinha saído lá). Impressora desligada: só não imprime."""
+        cfg = banco.config()
+        setores = sorted({impressora.setor_do_item(i) for i in itens} - {"nenhum"})
+        for setor in (s for s in setores if cfg.get(f"impressora_{s}_ativa")):
+            def trabalho(setor=setor):
+                try:
+                    impressora.enviar_para(cfg, setor, impressora.cupom_cancelamento(
+                        pedido, [i for i in itens if impressora.setor_do_item(i) == setor], motivo, cfg["nome_loja"],
+                        cfg["impressora_colunas"], cfg["impressora_codificacao"], inteiro))
+                except impressora.ErroImpressora as exc:
+                    log.warning("Falha na impressora %s: %s", setor, exc)
+            _em_segundo_plano(trabalho)
+
     # --- Pedidos ---------------------------------------------------------------
 
     @app.post("/api/pedidos")
@@ -621,8 +636,22 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         necessario = {"cancelado": ("cancelar",), "entregue": ("pedidos", "garcom")}.get(status, ("cozinha", "pedidos"))
         if not pode(*necessario):
             return jsonify({"ok": False, "erro": "Você não tem permissão para isso. Fale com o administrador."}), 403
-        return jsonify({"ok": True, "pedido": banco.mudar_status(pedido_id, status, por=ator(), motivo=dados.get("motivo", ""),
-                                                                setor=dados.get("setor") or None)})
+        antes = banco.obter_pedido(pedido_id)
+        pedido = banco.mudar_status(pedido_id, status, por=ator(), motivo=dados.get("motivo", ""),
+                                    setor=dados.get("setor") or None)
+        if status == "cancelado" and antes and antes["status"] in ("novo", "preparando"):
+            _imprimir_cancelamento(pedido, pedido["itens"], pedido["motivo_cancelamento"], True)
+        return jsonify({"ok": True, "pedido": pedido})
+
+    @app.post("/api/pedidos/<int:pedido_id>/cancelar-itens")
+    @exigir("cancelar")
+    def api_cancelar_itens(pedido_id):
+        dados = request.get_json(silent=True) or {}
+        antes = banco.obter_pedido(pedido_id)
+        r = banco.cancelar_itens(pedido_id, dados.get("itens"), dados.get("motivo", ""), por=ator())
+        if antes and antes["status"] in ("novo", "preparando"):
+            _imprimir_cancelamento(r["pedido"], r["cancelados"], str(dados.get("motivo", "")).strip(), r["pedido_cancelado"])
+        return jsonify({"ok": True, **r})
 
     @app.post("/api/pedidos/<int:pedido_id>/chamar")
     @exigir("pedidos")
@@ -740,7 +769,7 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         dados = request.get_json(silent=True) or {}
         rec = banco.receber(dados.get("pedido_ids"), dados.get("formas"), ator(),
                             desconto=dados.get("desconto", 0), acrescimo=dados.get("acrescimo", 0),
-                            valor=dados.get("valor"))
+                            valor=dados.get("valor"), itens=dados.get("itens") or None)
         return jsonify({"ok": True, "recebimento": rec})
 
     @app.post("/api/recebimentos/<int:rid>/estornar")

@@ -88,6 +88,7 @@ admin = Api()
 admin.form("/primeiro-acesso", {"nome": "Ana", "usuario": "ana", "senha": "1234ab", "confirmar": "1234ab"})
 produto = admin.json("POST", "/api/produtos", {"nome": "X-Burger", "preco_centavos": 2500, "categoria": "Lanches"})["produto"]
 admin.json("POST", "/api/mesas", {"numero": "5"})
+admin.json("POST", "/api/caixa/abrir", {"valor_abertura": 0})   # sem caixa aberto não entra pedido
 token = admin.json("GET", "/api/mesas")["mesas"][0]["token"]
 admin.json("POST", "/api/usuarios", {"nome": "Bruno", "login": "bruno", "senha": "1234ab", "permissoes": ["garcom"]})
 ident = admin.json("GET", "/api/identificar")

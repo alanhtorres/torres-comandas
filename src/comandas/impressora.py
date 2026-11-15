@@ -137,6 +137,27 @@ def cupom_cozinha(pedido: dict, nome_loja: str, colunas: int = 48, codificacao: 
     return c.bytes()
 
 
+def cupom_cancelamento(pedido: dict, itens: list, motivo: str, nome_loja: str, colunas: int = 48,
+                       codificacao: str = "cp850", inteiro: bool = False) -> bytes:
+    """Aviso para a cozinha/bar: não preparar estes itens (ou o pedido todo)."""
+    c = Cupom(colunas, codificacao)
+    largura_dupla = max(10, colunas // 2)
+    c.cmd(ALINHAR_CENTRO).linha(nome_loja)
+    c.cmd(TAMANHO_DUPLO + NEGRITO_ON).linha("CANCELADO").linha(f"No {pedido['codigo']}").cmd(TAMANHO_NORMAL + NEGRITO_OFF)
+    c.linha("PEDIDO INTEIRO - NAO PREPARAR" if inteiro else "Tirar do pedido - nao preparar:")
+    c.linha(datetime.now().strftime("%d/%m/%Y %H:%M")).cmd(ALINHAR_ESQ)
+    if pedido.get("mesa"):
+        c.linha(f"Mesa: {pedido['mesa']}")
+    c.separador()
+    for item in itens:
+        c.cmd(TAMANHO_DUPLO + NEGRITO_ON).quebrar(f"{item['quantidade']}x {item['nome']}", largura_dupla)
+        c.cmd(TAMANHO_NORMAL + NEGRITO_OFF)
+    c.separador()
+    if motivo:
+        c.quebrar(f"Motivo: {motivo}", colunas)
+    return c.bytes()
+
+
 def _valor(c: Cupom, rotulo: str, centavos: int, negrito: bool = False) -> None:
     texto = moeda(centavos)
     espacos = max(1, c.colunas - len(rotulo) - len(texto))

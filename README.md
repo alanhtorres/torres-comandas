@@ -239,7 +239,10 @@ juntos: nunca fica uma coisa sem a outra.
 
 ## Controle de caixa
 
-1. **Abrir o caixa** informando o fundo de troco.
+1. **Abrir o caixa** informando o fundo de troco. **Sem o caixa aberto não entra
+   pedido** — nem pelo caixa, nem pelo garçom, nem pelo QR code da mesa (o caixa e
+   o garçom veem o aviso "caixa fechado"; pedido feito sem Wi-Fi no celular fica
+   guardado e é enviado de novo pelo botão "Tentar de novo" depois que o caixa abrir).
 2. Receber as contas. Pedidos ainda não pagos ficam em **A receber**, agrupados por
    mesa (a conta da mesa inteira é paga de uma vez) ou por pedido (balcão). No balcão,
    **Enviar e receber** já abre o pagamento.
@@ -252,6 +255,10 @@ juntos: nunca fica uma coisa sem a outra.
      atalhos 2 a 6). Cada parte é paga separada (e pode ser de um jeito diferente);
      a janela já reabre para a próxima parte. Os centavos que não dividem certo
      ficam na primeira parte.
+   - **Pagar por item**: aparecem os itens da conta que ainda não foram pagos; o
+     caixa toca em + nos que o cliente consumiu e ele paga só esses (a taxa de
+     serviço, se ligada, é calculada sobre esses itens). Os itens ficam marcados
+     como pagos ("1 pago") e não aparecem de novo; o último pagamento fecha a conta.
    - **Pagar só uma parte** (abater): o valor pago é descontado e a conta/comanda
      continua aberta com o que falta. Serve também para quem paga com duas formas.
      A comanda só fecha no último pagamento.
@@ -261,6 +268,12 @@ juntos: nunca fica uma coisa sem a outra.
 4. **Fechar o caixa**: a pessoa conta o dinheiro da gaveta **sem ver** quanto
    deveria ter (fechamento "cego"); o sistema então mostra o esperado, o contado e
    a **sobra ou falta**, e imprime o comprovante se houver impressora do caixa.
+
+**Editar pedido** (botão ✏️ Editar no pedido, para quem pode cancelar): escolhe
+quantas unidades de cada item cancelar, ou **cancela o pedido inteiro** — sempre com
+o motivo, que fica no histórico e nos relatórios ("Pedidos e itens cancelados"). Se
+a cozinha/bar tem impressora, sai um aviso "CANCELADO — não preparar". O que já foi
+pago (inclusive item pago no pagamento por item) não pode ser cancelado.
 
 Pedido pago não pode ser cancelado sem antes estornar o pagamento, e só dá para
 estornar pagamentos do caixa que está aberto — o que já foi fechado não muda mais.

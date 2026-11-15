@@ -172,3 +172,10 @@ def test_cupom_cozinha_e_conta_do_delivery():
     assert b"DELIVERY" in impressora.cupom_cozinha(DELIVERY, "Pizzaria")
     conta = impressora.cupom_conta("Delivery 15", [DELIVERY], "Pizzaria")
     assert b"Taxa de entrega" in conta and b"R$ 67,00" in conta
+
+
+def test_cupom_de_cancelamento_para_a_cozinha():
+    dados = impressora.cupom_cancelamento(PEDIDO, [{"nome": "Suco de maçã", "quantidade": 1}], "cliente desistiu", "Bar")
+    assert b"CANCELADO" in dados and b"No 42" in dados and "1x Suco de maçã".encode("cp850") in dados
+    assert b"Motivo: cliente desistiu" in dados and b"nao preparar" in dados
+    assert b"PEDIDO INTEIRO" in impressora.cupom_cancelamento(PEDIDO, PEDIDO["itens"], "x", "Bar", inteiro=True)

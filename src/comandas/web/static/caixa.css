@@ -150,6 +150,8 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 .ajuste-aberto.dividir .atalho { width: 38px; height: 38px; font-size: 1rem; }
 .ajuste-aberto.dividir .atalho.ligado { background: var(--destaque); color: #0f172a; font-weight: 700; }
 
+.aviso-caixa-fechado { color: var(--amarelo); font-weight: 700; text-align: center; margin: 6px 0; }
+
 /* Delivery */
 .tipo-venda { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 4px; }
 .tipo-venda button { padding: 10px; font-size: 1rem; }
@@ -176,3 +178,17 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 .conta .ja-pago { color: var(--texto-2); font-size: 0.9rem; margin-top: 2px; }
 .conta ul.abatimentos { list-style: none; padding-left: 0; color: #86efac; }
 :root[data-tema="claro"] .conta ul.abatimentos { color: #15803d; }
+
+/* Editar pedido e pagamento por item */
+.editar-itens, .ajuste-aberto.por-item { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.editar-item, .item-pagar { display: flex; align-items: center; gap: 10px; justify-content: space-between; flex-wrap: wrap;
+  background: var(--fundo); border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; }
+.ajuste-aberto.por-item .item-pagar { background: var(--painel); }
+.editar-item.marcado { border-color: var(--vermelho); }
+.item-pagar.marcado { border-color: var(--destaque); }
+.editar-item .nome, .item-pagar .nome { flex: 1; min-width: 160px; }
+.editar-item small, .item-pagar small { color: var(--texto-2); }
+.qtd-cancelar { display: flex; align-items: center; gap: 8px; }
+.qtd-cancelar button { min-width: 38px; height: 38px; padding: 0 8px; }
+.qtd-cancelar strong { min-width: 2ch; text-align: center; font-size: 1.15rem; }
+.cancelar-inteiro { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--borda); }
