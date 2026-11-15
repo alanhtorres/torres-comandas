@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Conferência — {{ titulo }} — {{ loja }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    /* Sempre preto no branco: é para imprimir. */
+    body { background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; margin: 0; }
+    .cupom { max-width: 360px; margin: 16px auto; padding: 14px; border: 2px dashed #000; }
+    .centro { text-align: center; }
+    h1 { font-size: 20px; margin: 6px 0; }
+    h2 { font-size: 18px; margin: 4px 0; }
+    hr { border: 0; border-top: 1px solid #000; margin: 8px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    td { padding: 2px 0; }
+    td.v { text-align: right; white-space: nowrap; }
+    .forte td { font-size: 20px; font-weight: bold; padding-top: 4px; }
+    .rodape { font-size: 12px; }
+    .acoes { text-align: center; margin: 12px; }
+    .acoes button { font-size: 16px; padding: 10px 18px; }
+    @media print { .acoes { display: none; } .cupom { margin: 0 auto; border: 0; } }
+  </style>
+</head>
+<body>
+  <div class="acoes"><button onclick="window.print()">🖨️ Imprimir</button> <button onclick="window.close()">Fechar</button></div>
+  <div class="cupom">
+    <div class="centro">
+      <div>{{ loja }}</div>
+      <h1>CONFERÊNCIA DE CONTA</h1>
+      <h2>{{ titulo }}</h2>
+      <div>{{ hora }}</div>
+    </div>
+    <hr>
+    <table>
+      {% for rotulo, valor in resumo.itens %}
+      <tr><td>{{ rotulo }}</td><td class="v">{{ moeda(valor) }}</td></tr>
+      {% endfor %}
+    </table>
+    <hr>
+    <table>
+      {% for rotulo, valor, forte in resumo.totais %}
+      <tr{% if forte %} class="forte"{% endif %}><td>{{ rotulo }}</td><td class="v">{{ moeda(valor) }}</td></tr>
+      {% endfor %}
+    </table>
+    <hr>
+    <div class="centro rodape">Confira os itens antes de pagar.<br>Não é documento fiscal.</div>
+  </div>
+  <script>window.addEventListener("load", () => setTimeout(() => window.print(), 300));</script>
+</body>
+</html>

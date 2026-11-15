@@ -119,8 +119,8 @@ def test_cupom_conta_dividida_mostra_o_que_ja_foi_pago():
     # 69,00 com taxa de 10% cobrada no 1º pagamento: pagou 40,00 (cobre 33,10 da conta)
     dados = impressora.cupom_conta("Mesa 7", [PEDIDO], "Bar", taxa_servico_percentual=10,
                                    abatido={"subtotal": 3310, "pago": 4000})
-    assert b"Taxa de servico (ja cobrada)" in dados and b"R$ 6,90" in dados
-    assert b"Ja pago" in dados and b"R$ 40,00" in dados
+    assert "Taxa de serviço (já cobrada)".encode("cp850") in dados and b"R$ 6,90" in dados
+    assert "Já pago".encode("cp850") in dados and b"R$ 40,00" in dados
     assert b"Falta pagar" in dados and b"R$ 35,90" in dados
     assert b"opcional" not in dados   # a taxa não é sugerida de novo
 

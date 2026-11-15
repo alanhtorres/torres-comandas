@@ -168,44 +168,55 @@ def _valor(c: Cupom, rotulo: str, centavos: int, negrito: bool = False) -> None:
         c.cmd(NEGRITO_OFF)
 
 
-def cupom_conta(titulo: str, pedidos: list, nome_loja: str, taxa_servico_percentual: int = 0,
-                colunas: int = 48, codificacao: str = "cp850", abatido: Optional[dict] = None) -> bytes:
-    """Conferência de conta (pré-conta) para o cliente — não é documento fiscal.
-    "abatido" = {"subtotal", "pago"}: partes da conta já pagas (conta dividida)."""
-    c = Cupom(colunas, codificacao)
-    c.cmd(ALINHAR_CENTRO).linha(nome_loja).cmd(NEGRITO_ON).linha("CONFERENCIA DE CONTA").cmd(NEGRITO_OFF)
-    c.linha(titulo).linha(datetime.now().strftime("%d/%m/%Y %H:%M")).cmd(ALINHAR_ESQ).separador()
+def resumo_conta(pedidos: list, taxa_servico_percentual: int = 0, abatido: Optional[dict] = None) -> dict:
+    """Conta de conferência: itens e linhas de total, usada no cupom térmico e na página do navegador.
+    "abatido" = {"subtotal", "pago"}: partes da conta já pagas (conta dividida/por item)."""
+    itens, totais = [], []
     subtotal = 0
     for pedido in pedidos:
         for item in pedido["itens"]:
             valor = item["preco_centavos"] * item["quantidade"]
             subtotal += valor
-            _valor(c, f"{item['quantidade']}x {item['nome']}"[: c.colunas - 13], valor)
+            itens.append((f"{item['quantidade']}x {item['nome']}", valor))
     if any(p.get("entrega_taxa") for p in pedidos):
         taxa_entrega = sum(p.get("entrega_taxa") or 0 for p in pedidos)
-        _valor(c, "Taxa de entrega", taxa_entrega)
+        itens.append(("Taxa de entrega", taxa_entrega))
         subtotal += taxa_entrega
-    c.separador()
-    _valor(c, "Subtotal", subtotal)
+    totais.append(("Subtotal", subtotal, False))
     rotulo_total = "Total"
     if abatido and abatido.get("subtotal"):
         ajuste = abatido["pago"] - abatido["subtotal"]
         if ajuste > 0:
-            _valor(c, "Taxa de servico (ja cobrada)", ajuste)
+            totais.append(("Taxa de serviço (já cobrada)", ajuste, False))
             taxa_servico_percentual = 0
         elif ajuste < 0:
-            _valor(c, "Desconto (ja dado)", -ajuste)
-        _valor(c, "Ja pago", abatido["pago"])
+            totais.append(("Desconto (já dado)", -ajuste, False))
+        totais.append(("Já pago", abatido["pago"], False))
         subtotal = max(0, subtotal - abatido["subtotal"])
         rotulo_total = "Falta pagar"
     if taxa_servico_percentual:
         taxa = round(subtotal * taxa_servico_percentual / 100)
         if rotulo_total != "Total":
-            _valor(c, rotulo_total, subtotal)
-        _valor(c, f"Taxa de servico ({taxa_servico_percentual}%) opcional", taxa)
-        _valor(c, "Total com taxa", subtotal + taxa, negrito=True)
+            totais.append((rotulo_total, subtotal, False))
+        totais.append((f"Taxa de serviço ({taxa_servico_percentual}%) opcional", taxa, False))
+        totais.append(("Total com taxa", subtotal + taxa, True))
     else:
-        _valor(c, rotulo_total, subtotal, negrito=True)
+        totais.append((rotulo_total, subtotal, True))
+    return {"itens": itens, "totais": totais}
+
+
+def cupom_conta(titulo: str, pedidos: list, nome_loja: str, taxa_servico_percentual: int = 0,
+                colunas: int = 48, codificacao: str = "cp850", abatido: Optional[dict] = None) -> bytes:
+    """Conferência de conta (pré-conta) para o cliente — não é documento fiscal."""
+    c = Cupom(colunas, codificacao)
+    c.cmd(ALINHAR_CENTRO).linha(nome_loja).cmd(NEGRITO_ON).linha("CONFERENCIA DE CONTA").cmd(NEGRITO_OFF)
+    c.linha(titulo).linha(datetime.now().strftime("%d/%m/%Y %H:%M")).cmd(ALINHAR_ESQ).separador()
+    resumo = resumo_conta(pedidos, taxa_servico_percentual, abatido)
+    for rotulo, valor in resumo["itens"]:
+        _valor(c, rotulo[: c.colunas - 13], valor)
+    c.separador()
+    for rotulo, valor, negrito in resumo["totais"]:
+        _valor(c, rotulo, valor, negrito=negrito)
     c.separador().cmd(ALINHAR_CENTRO).linha("Nao e documento fiscal")
     return c.bytes()
 

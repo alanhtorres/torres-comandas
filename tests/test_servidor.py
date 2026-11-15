@@ -1084,3 +1084,27 @@ def test_editar_pedido_cancela_itens_imprime_na_cozinha_e_paga_por_item(ambiente
     assert r.status_code == 200 and r.get_json()["recebimento"]["parcial"] is True
     estado = admin.get("/api/estado").get_json()
     assert estado["contas"][0]["falta"] == 800 and estado["pedidos"][0]["itens"][0]["pago_qtd"] == 1
+
+
+def test_conferencia_da_conta_pelo_navegador(ambiente, admin):
+    app, banco, _ = ambiente
+    lanche = _produto(admin, preco=3000)
+    suco = _produto(admin, nome="Suco", preco=1000)
+    pedido = admin.post("/api/pedidos", json={"itens": [{"produto_id": lanche["id"]}, {"produto_id": suco["id"], "quantidade": 2}],
+                                             "mesa": "4"}).get_json()["pedido"]
+    pagina = admin.get(f"/conferencia?pedidos={pedido['id']}&titulo=Mesa 4")
+    html = pagina.get_data(as_text=True)
+    assert pagina.status_code == 200 and "CONFERÊNCIA DE CONTA" in html and "Mesa 4" in html
+    assert "1x X-Burger" in html and "2x Suco" in html and "R$ 50,00" in html and "Falta pagar" not in html
+    # pagou o lanche por item: a conferência mostra o que já foi pago e o que falta
+    admin.post("/api/caixa/abrir", json={"valor_abertura": 0})
+    item = next(i for i in banco.obter_pedido(pedido["id"])["itens"] if i["nome"] == "X-Burger")
+    r = admin.post("/api/recebimentos", json={"pedido_ids": [pedido["id"]], "itens": [{"item_id": item["id"], "quantidade": 1}],
+                                              "formas": [{"forma": "pix", "valor": 3000}]})
+    assert r.status_code == 200, r.get_json()
+    html = admin.get(f"/conferencia?pedidos={pedido['id']}").get_data(as_text=True)
+    assert "Já pago" in html and "R$ 30,00" in html and "Falta pagar" in html and "R$ 20,00" in html
+    assert f"Pedido nº {pedido['codigo']}" in html   # título padrão
+    # nada válido para imprimir
+    assert admin.get("/conferencia?pedidos=99999").status_code == 400
+    assert admin.get("/conferencia?pedidos=abc").status_code == 400

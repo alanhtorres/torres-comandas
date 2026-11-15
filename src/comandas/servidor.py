@@ -707,20 +707,34 @@ def criar_app(banco: Banco, pasta_dados: Path, url_base_padrao="", impressao_sin
         banco.atender_chamado(chamado_id, por=ator())
         return jsonify({"ok": True})
 
+    def _conta_para_conferir(ids, titulo):
+        pedidos = [banco.obter_pedido(int(i)) for i in ids or [] if str(i).strip().isdigit()]
+        pedidos = [p for p in pedidos if p and p["status"] != "cancelado"]
+        if not pedidos:
+            raise ErroNegocio("Nada para imprimir.")
+        titulo = str(titulo or "")[:60] or ("Pedido nº " + str(pedidos[0]["codigo"]) if len(pedidos) == 1 else "Conta")
+        abatido = banco.abatido([p["id"] for p in pedidos if not p["pago"]])
+        return pedidos, titulo, banco.config()["taxa_servico_percentual"], abatido
+
     @app.post("/api/contas/imprimir")
     @exigir("pedidos", "receber", "garcom")
     def api_imprimir_conta():
         dados = request.get_json(silent=True) or {}
-        pedidos = [banco.obter_pedido(int(i)) for i in dados.get("pedido_ids") or []]
-        pedidos = [p for p in pedidos if p and p["status"] != "cancelado"]
-        if not pedidos:
-            raise ErroNegocio("Nada para imprimir.")
-        titulo = str(dados.get("titulo") or "")[:60]
-        taxa = banco.config()["taxa_servico_percentual"]
-        abatido = banco.abatido([p["id"] for p in pedidos if not p["pago"]])
+        pedidos, titulo, taxa, abatido = _conta_para_conferir(dados.get("pedido_ids"), dados.get("titulo"))
         _imprimir("caixa", lambda loja, col, cod: impressora.cupom_conta(titulo, pedidos, loja, taxa, col, cod, abatido))
         banco.registrar_acao(ator(), "Imprimiu conferência de conta", titulo)
         return jsonify({"ok": True})
+
+    @app.get("/conferencia")
+    @exigir("pedidos", "receber", "garcom")
+    def tela_conferencia():
+        """Conferência de conta para imprimir pelo navegador (sem a térmica do caixa)."""
+        ids = (request.args.get("pedidos") or "").split(",")
+        pedidos, titulo, taxa, abatido = _conta_para_conferir(ids, request.args.get("titulo"))
+        banco.registrar_acao(ator(), "Imprimiu conferência de conta", titulo + " (pelo navegador)")
+        return render_template("conferencia.html", titulo=titulo, resumo=impressora.resumo_conta(pedidos, taxa, abatido),
+                               loja=banco.config()["nome_loja"], moeda=moeda,
+                               hora=datetime.now().strftime("%d/%m/%Y %H:%M"))
 
     # --- Caixa e pagamentos --------------------------------------------------
 

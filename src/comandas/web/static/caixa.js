@@ -377,6 +377,16 @@
     render();
   }
 
+  // Conferência da conta para o cliente: na térmica do caixa, ou pelo navegador se ela não estiver ligada.
+  function imprimirConferencia(pedidos, titulo) {
+    const ids = pedidos.map((p) => p.id);
+    if (estado.impressora_caixa_ativa) {
+      acao("POST", "/api/contas/imprimir", { pedido_ids: ids, titulo }, "Conta enviada para a impressora");
+    } else {
+      window.open("/conferencia?pedidos=" + ids.join(",") + "&titulo=" + encodeURIComponent(titulo), "_blank", "width=480,height=760");
+    }
+  }
+
   function cartaoPedido(p) {
     const botoes = [];
     const chamar = (rotulo, classe) => el("button", { class: classe || "", onclick: () => acao("POST", `/api/pedidos/${p.id}/chamar`, {}, `Pedido ${p.codigo} chamado no painel`) }, rotulo);
@@ -403,6 +413,10 @@
       if (ondeImprime.length) {
         botoes.push(el("button", { class: "discreto", title: "Reimprimir no(a) " + ondeImprime.join(" e "), onclick: () => acao("POST", `/api/pedidos/${p.id}/imprimir`, {}, "Enviado para a impressora") }, "🖨️"));
       }
+    }
+    if ((pode.pedidos || pode.receber) && !p.pago) {
+      botoes.push(el("button", { class: "discreto", title: "Imprimir a conta deste pedido para o cliente conferir antes de pagar",
+        onclick: () => imprimirConferencia([p], "Pedido nº " + p.codigo + (p.mesa ? " · Mesa " + p.mesa : "") + (p.cliente ? " · " + p.cliente : "")) }, "🖨️ Conta"));
     }
     if (pode.receber && !p.pago) {
       botoes.push(el("button", { class: "discreto", title: "Receber este pedido", onclick: () => dialogoPagamento([p], "Pedido nº " + p.codigo) }, "💲"));
@@ -466,7 +480,7 @@
         + (a.itens ? " — " + a.itens : "")))) : null,
       el("div", { class: "acoes" },
         pode.pedidos && c.pedidos.length === 1 && c.pedidos[0].entrega ? el("button", { onclick: () => imprimirEtiqueta(c.pedidos[0]) }, "🏷️ Etiqueta do entregador") : null,
-        estado.impressora_caixa_ativa ? el("button", { onclick: () => acao("POST", "/api/contas/imprimir", { pedido_ids: c.pedidos.map((p) => p.id), titulo: c.titulo }, "Conta enviada para a impressora") }, "🖨️ Imprimir conta") : null,
+        el("button", { onclick: () => imprimirConferencia(c.pedidos, c.titulo) }, "🖨️ Imprimir conta"),
         pode.receber ? el("button", { class: "verde", disabled: !estado.caixa_aberto, title: estado.caixa_aberto ? "" : "Abra o caixa para receber",
           onclick: () => dialogoPagamento(c.pedidos, c.titulo) }, "💲 Receber") : null))));
   }

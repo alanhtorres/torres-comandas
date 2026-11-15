@@ -269,6 +269,12 @@ juntos: nunca fica uma coisa sem a outra.
    deveria ter (fechamento "cego"); o sistema então mostra o esperado, o contado e
    a **sobra ou falta**, e imprime o comprovante se houver impressora do caixa.
 
+**Conferência da conta** (botão 🖨️ Conta em todo pedido ainda não pago, e 🖨️ Imprimir
+conta na aba "A receber"): imprime os itens e o total para o cliente conferir antes de
+pagar. Sai na impressora térmica do caixa, se estiver ligada; senão abre uma página para
+imprimir pelo navegador. Se parte já foi paga, mostra "já pago" e "falta pagar". Pedido
+pago não mostra o botão.
+
 **Editar pedido** (botão ✏️ Editar no pedido, para quem pode cancelar): escolhe
 quantas unidades de cada item cancelar, ou **cancela o pedido inteiro** — sempre com
 o motivo, que fica no histórico e nos relatórios ("Pedidos e itens cancelados"). Se
