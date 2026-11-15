@@ -30,12 +30,19 @@ try {
     }
     $json = @{ "Content-Type" = "application/json; charset=utf-8" }
     $produto = Invoke-RestMethod "$base/api/produtos" -Method Post -Headers $json -WebSession $s -Body ([Text.Encoding]::UTF8.GetBytes('{"nome":"Pão de queijo","preco_centavos":500}'))
+    # Sem caixa aberto o pedido não entra (desde a 3.5.0)
     $corpo = @{ itens = @(@{ produto_id = $produto.produto.id; quantidade = 2 }); cliente = "Teste" } | ConvertTo-Json -Depth 5
+    try {
+        Invoke-RestMethod "$base/api/pedidos" -Method Post -Headers $json -WebSession $s -Body $corpo | Out-Null
+        throw "Pedido entrou com o caixa fechado"
+    } catch {
+        if ($_.Exception.Message -eq "Pedido entrou com o caixa fechado") { throw }
+    }
+    Invoke-RestMethod "$base/api/caixa/abrir" -Method Post -Headers $json -WebSession $s -Body '{"valor_abertura":10000}' | Out-Null
     $pedido = Invoke-RestMethod "$base/api/pedidos" -Method Post -Headers $json -WebSession $s -Body $corpo
     Invoke-RestMethod "$base/api/pedidos/$($pedido.pedido.id)/chamar" -Method Post -Headers $json -WebSession $s -Body '{}' | Out-Null
     $painel = Invoke-RestMethod "$base/api/painel"
     if ($painel.chamadas[0].codigo -ne "1") { throw "Pedido chamado não apareceu no painel" }
-    Invoke-RestMethod "$base/api/caixa/abrir" -Method Post -Headers $json -WebSession $s -Body '{"valor_abertura":10000}' | Out-Null
     $pag = @{ pedido_ids = @($pedido.pedido.id); formas = @(@{ forma = "dinheiro"; valor = 2000 }) } | ConvertTo-Json -Depth 5
     $rec = Invoke-RestMethod "$base/api/recebimentos" -Method Post -Headers $json -WebSession $s -Body $pag
     if ($rec.recebimento.troco -ne 1000) { throw "Troco calculado errado" }
