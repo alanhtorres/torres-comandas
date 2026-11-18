@@ -315,40 +315,50 @@
 
   // Editar pedido: tirar itens (todas ou algumas unidades) ou cancelar o
   // pedido inteiro — sempre com o motivo, que fica no histórico.
+  const MOTIVOS_RAPIDOS = ["Cliente desistiu", "Lançado errado", "Acabou o produto", "Demorou muito"];
+
+  // Editar pedido: um toque em "Cancelar" no item, um toque no motivo, e confirmar.
   function dialogoEditar(p) {
     const tirar = new Map(); // item_id -> quantas unidades cancelar
-    const motivo = el("input", { maxlength: 200, placeholder: "Ex.: cliente desistiu, lançado errado" });
+    const motivo = el("input", { maxlength: 200, placeholder: "Ou escreva outro motivo" });
+    const chips = el("div", { class: "motivos-rapidos" });
     const linhas = el("div", { class: "editar-itens" });
     const resumo = el("div", { class: "linha-valor destaque" });
+    motivo.addEventListener("input", () => render());
     function render() {
       linhas.replaceChildren(...p.itens.map((i) => {
         const livre = i.quantidade - (i.pago_qtd || 0);
         const n = tirar.get(i.id) || 0;
         const mudar = (d) => { tirar.set(i.id, Math.min(livre, Math.max(0, n + d))); render(); };
-        return el("div", { class: "editar-item" + (n ? " marcado" : "") },
+        let acoes;
+        if (!livre) acoes = el("small", {}, "já pago");
+        else if (!n) acoes = el("button", { type: "button", class: "btn-cancelar-item", onclick: () => mudar(1) }, "🗑️ Cancelar");
+        else acoes = el("div", { class: "qtd-cancelar" },
+          livre > 1 ? el("button", { type: "button", onclick: () => mudar(-1) }, "−") : null,
+          el("strong", {}, livre > 1 ? `${n} de ${livre}` : "vai sair"),
+          livre > 1 && n < livre ? el("button", { type: "button", onclick: () => mudar(1) }, "+") : null,
+          el("button", { type: "button", class: "discreto", onclick: () => { tirar.set(i.id, 0); render(); } }, "↩ Desfazer"));
+        return el("div", { class: "editar-item" + (n ? " marcado" : "") + (n && n === i.quantidade ? " sai-tudo" : "") },
           el("div", { class: "nome" }, el("strong", {}, i.quantidade + "× " + i.nome),
             i.observacao ? el("small", {}, " (" + i.observacao + ")") : null,
             i.pago_qtd ? el("small", { class: "positivo" }, ` · ${i.pago_qtd} já pago`) : null,
             el("small", {}, " · " + moeda(i.preco_centavos) + " cada")),
-          livre ? el("div", { class: "qtd-cancelar" },
-            el("span", {}, "Cancelar"),
-            el("button", { type: "button", onclick: () => mudar(-1) }, "−"),
-            el("strong", {}, String(n)),
-            el("button", { type: "button", onclick: () => mudar(1) }, "+"),
-            el("button", { type: "button", class: "discreto", onclick: () => { tirar.set(i.id, n === livre ? 0 : livre); render(); } }, n === livre ? "nenhum" : "todos"))
-            : el("small", {}, "já pago — não dá para cancelar"));
+          acoes);
       }));
+      chips.replaceChildren(...MOTIVOS_RAPIDOS.map((m) => el("button", { type: "button",
+        class: "chip-motivo" + (motivo.value === m ? " ativo" : ""), onclick: () => { motivo.value = m; render(); } }, m)));
       const valor = p.itens.reduce((t, i) => t + (tirar.get(i.id) || 0) * i.preco_centavos, 0);
       resumo.replaceChildren(el("span", {}, valor ? "O pedido fica com" : "Total do pedido"), el("span", {}, moeda(p.total_centavos - valor)));
       const ok = janela && janela.elemento.querySelector("button[type=submit]");
       if (ok) {
         const qtd = [...tirar.values()].reduce((a, b) => a + b, 0);
-        ok.disabled = !qtd;
-        ok.textContent = qtd ? `Cancelar ${qtd} ${qtd > 1 ? "itens" : "item"} (${moeda(valor)})` : "Escolha os itens a cancelar";
+        ok.disabled = !qtd || !motivo.value.trim();
+        ok.textContent = !qtd ? "Toque em 🗑️ Cancelar no item" : !motivo.value.trim() ? "Agora escolha o motivo"
+          : `Confirmar: cancelar ${qtd} ${qtd > 1 ? "itens" : "item"} (${moeda(valor)})`;
       }
     }
     const inteiro = el("button", { type: "button", class: "perigo", onclick: async () => {
-      if (!motivo.value.trim()) { motivo.focus(); aviso("Escreva o motivo do cancelamento.", "erro"); return; }
+      if (!motivo.value.trim()) { aviso("Escolha o motivo antes de cancelar.", "erro"); chips.scrollIntoView({ block: "center" }); return; }
       if (!confirm(`Cancelar o pedido nº ${p.codigo} inteiro (${moeda(p.total_centavos)})?`)) return;
       try {
         await api("POST", `/api/pedidos/${p.id}/status`, { status: "cancelado", motivo: motivo.value });
@@ -358,19 +368,19 @@
       } catch (err) { aviso(err.message, "erro"); }
     } }, "❌ Cancelar o pedido inteiro");
     const janela = dialogo({
-      titulo: `Editar pedido nº ${p.codigo}` + (p.mesa ? " · mesa " + p.mesa : "") + (p.cliente ? " · " + p.cliente : ""),
+      titulo: `Pedido nº ${p.codigo}` + (p.mesa ? " · mesa " + p.mesa : "") + (p.cliente ? " · " + p.cliente : ""),
       largo: true,
       corpo: el("div", {},
-        el("p", { class: "dica" }, "Toque em + para escolher o que cancelar. O que já foi pago não pode ser cancelado."),
+        el("p", { class: "passo" }, "1. Qual item vai sair?"),
         linhas, resumo,
-        el("label", {}, "Motivo do cancelamento (obrigatório, fica registrado)"), motivo,
+        el("p", { class: "passo" }, "2. Por quê?"), chips, motivo,
         el("div", { class: "cancelar-inteiro" }, inteiro)),
-      confirmar: "Escolha os itens a cancelar", cancelar: "Voltar", perigo: true,
+      confirmar: "Toque em 🗑️ Cancelar no item", cancelar: "Voltar", perigo: true,
       aoConfirmar: async () => {
-        if (!motivo.value.trim()) throw new Error("Escreva o motivo do cancelamento.");
+        if (!motivo.value.trim()) throw new Error("Escolha o motivo do cancelamento.");
         const itens = [...tirar.entries()].filter(([, q]) => q).map(([item_id, quantidade]) => ({ item_id, quantidade }));
         const r = await api("POST", `/api/pedidos/${p.id}/cancelar-itens`, { itens, motivo: motivo.value });
-        aviso(r.pedido_cancelado ? "Todos os itens saíram: pedido cancelado" : "Itens cancelados. O pedido ficou com " + moeda(r.pedido.total_centavos), "ok");
+        aviso(r.pedido_cancelado ? "Todos os itens saíram: pedido cancelado" : "Item cancelado. O pedido ficou com " + moeda(r.pedido.total_centavos), "ok");
         monitor.forcar();
       },
     });
@@ -422,7 +432,7 @@
       botoes.push(el("button", { class: "discreto", title: "Receber este pedido", onclick: () => dialogoPagamento([p], "Pedido nº " + p.codigo) }, "💲"));
     }
     if (pode.cancelar && !p.pago) {
-      botoes.push(el("button", { class: "discreto", title: "Editar pedido: cancelar itens ou o pedido inteiro", onclick: () => dialogoEditar(p) }, "✏️ Editar"));
+      botoes.push(el("button", { class: "discreto", title: "Cancelar itens ou o pedido inteiro", onclick: () => dialogoEditar(p) }, "✏️ Editar / cancelar"));
     }
     const quem = [p.origem === "qrcode" ? el("span", { class: "etiqueta qrcode" }, "QR code") : null,
       p.origem === "garcom" ? el("span", { class: "etiqueta qrcode" }, "Garçom " + (p.usuario_nome || "")) : null,

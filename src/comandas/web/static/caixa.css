@@ -191,4 +191,12 @@ h2 { font-size: 1.05rem; margin: 0 0 10px; }
 .qtd-cancelar { display: flex; align-items: center; gap: 8px; }
 .qtd-cancelar button { min-width: 38px; height: 38px; padding: 0 8px; }
 .qtd-cancelar strong { min-width: 2ch; text-align: center; font-size: 1.15rem; }
+.editar-item.sai-tudo .nome strong { text-decoration: line-through; color: var(--vermelho); }
+.btn-cancelar-item { background: transparent; color: var(--vermelho); border: 2px solid var(--vermelho);
+  font-weight: 700; padding: 8px 16px; min-height: 42px; }
+.btn-cancelar-item:hover { background: var(--vermelho); color: #fff; }
+.passo { font-weight: 700; font-size: 1.05rem; margin: 10px 0 4px; }
+.motivos-rapidos { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 8px; }
+.chip-motivo { border-radius: 999px; padding: 8px 14px; min-height: 40px; }
+.chip-motivo.ativo { background: var(--vermelho); border-color: var(--vermelho); color: #fff; }
 .cancelar-inteiro { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--borda); }

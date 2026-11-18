@@ -275,11 +275,14 @@ pagar. Sai na impressora térmica do caixa, se estiver ligada; senão abre uma p
 imprimir pelo navegador. Se parte já foi paga, mostra "já pago" e "falta pagar". Pedido
 pago não mostra o botão.
 
-**Editar pedido** (botão ✏️ Editar no pedido, para quem pode cancelar): escolhe
-quantas unidades de cada item cancelar, ou **cancela o pedido inteiro** — sempre com
-o motivo, que fica no histórico e nos relatórios ("Pedidos e itens cancelados"). Se
-a cozinha/bar tem impressora, sai um aviso "CANCELADO — não preparar". O que já foi
-pago (inclusive item pago no pagamento por item) não pode ser cancelado.
+**Cancelar item ou pedido** (botão ✏️ Editar / cancelar no pedido, para quem pode
+cancelar), em três toques: 1) toque em **🗑️ Cancelar** no item que vai sair (se tiver
+mais de uma unidade, ajuste quantas com − e +; "↩ Desfazer" volta atrás); 2) toque no
+motivo (Cliente desistiu, Lançado errado, Acabou o produto, Demorou muito) ou escreva
+outro; 3) **Confirmar**. Para cancelar tudo, escolha o motivo e toque em **❌ Cancelar
+o pedido inteiro**. O motivo fica no histórico e nos relatórios ("Pedidos e itens
+cancelados"). Se a cozinha/bar tem impressora, sai um aviso "CANCELADO — não preparar".
+O que já foi pago (inclusive item pago no pagamento por item) não pode ser cancelado.
 
 Pedido pago não pode ser cancelado sem antes estornar o pagamento, e só dá para
 estornar pagamentos do caixa que está aberto — o que já foi fechado não muda mais.
